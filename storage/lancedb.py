@@ -1,0 +1,113 @@
+import os
+import lancedb
+import pyarrow as pa
+from typing import List, Optional
+from ..models.memory_unit import MemoryUnit
+
+
+EMBED_MODEL_OLLAMA = "qwen3-embedding:4b"
+EMBED_MODEL_MINIMAX = "embo-01"
+
+
+class LanceDBStorage:
+    def __init__(
+        self,
+        db_path: str = "./data/lancedb",
+        embed_model: Optional[str] = None,
+        embed_dim: int = 2560,
+    ):
+        self.db_path = db_path
+        self.embed_dim = embed_dim
+        
+        api_key = os.getenv("MINIMAX_API_KEY", "")
+        if api_key and embed_model is None:
+            self.embed_model = EMBED_MODEL_MINIMAX
+            self.use_minimax = True
+        else:
+            self.embed_model = embed_model or EMBED_MODEL_OLLAMA
+            self.use_minimax = False
+        
+        self.db = lancedb.connect(db_path)
+        self._ensure_table()
+
+    def _ensure_table(self):
+        if "memories" not in self.db.table_names():
+            self.db.create_table("memories", schema=self._schema())
+
+    def _schema(self):
+        return pa.schema([
+            pa.field("id", pa.string()),
+            pa.field("lossless_text", pa.string()),
+            pa.field("vector", pa.list_(pa.float32(), self.embed_dim)),
+            pa.field("keywords", pa.list_(pa.string())),
+            pa.field("timestamp", pa.string()),
+            pa.field("persons", pa.list_(pa.string())),
+            pa.field("topic", pa.string()),
+            pa.field("session_id", pa.string()),
+        ])
+
+    async def _embed(self, text: str) -> List[float]:
+        if self.use_minimax:
+            try:
+                from ..utils.llm_backend import get_llm_backend
+                backend = get_llm_backend()
+                response = await backend.embeddings(self.embed_model, text)
+                return response["embedding"]
+            except Exception as e:
+                print(f"MiniMax embeddings failed ({e}), falling back to Ollama")
+        
+        import ollama
+        response = ollama.embeddings(model=EMBED_MODEL_OLLAMA, prompt=text)
+        return response["embedding"]
+
+    async def add(self, memory: MemoryUnit) -> str:
+        vector = await self._embed(memory.lossless_text)
+        data = {
+            "id": memory.id,
+            "lossless_text": memory.lossless_text,
+            "vector": vector,
+            "keywords": memory.keywords,
+            "timestamp": memory.timestamp,
+            "persons": memory.persons,
+            "topic": memory.topic,
+            "session_id": memory.session_id,
+        }
+        self.db["memories"].add([data])
+        return memory.id
+
+    async def search(self, query: str, top_k: int = 5) -> List[MemoryUnit]:
+        query_vector = await self._embed(query)
+        results = self.db["memories"].search(query_vector, vector_column_name="vector").limit(top_k).to_list()
+        
+        memories = []
+        for r in results:
+            memories.append(MemoryUnit(
+                id=r["id"],
+                lossless_text=r["lossless_text"],
+                keywords=r["keywords"],
+                timestamp=r["timestamp"],
+                persons=r["persons"],
+                topic=r["topic"],
+                session_id=r["session_id"],
+            ))
+        return memories
+
+    async def get_by_topic(self, topic: str) -> List[MemoryUnit]:
+        results = self.db["memories"].search(None, vector_column_name="vector").where(f"topic = '{topic}'").limit(100).to_list()
+        return [self._row_to_memory(r) for r in results]
+
+    async def get_by_person(self, person: str) -> List[MemoryUnit]:
+        results = self.db["memories"].search(None, vector_column_name="vector").limit(100).to_list()
+        filtered = [r for r in results if person in r.get("persons", [])]
+        return [self._row_to_memory(r) for r in filtered]
+
+    def _row_to_memory(self, row: dict) -> MemoryUnit:
+        return MemoryUnit(
+            id=row["id"],
+            lossless_text=row["lossless_text"],
+            keywords=row["keywords"],
+            timestamp=row["timestamp"],
+            persons=row["persons"],
+            topic=row["topic"],
+            session_id=row["session_id"],
+        )

@@ -1,0 +1,8 @@
+pydantic>=2.0
+lancedb>=0.1
+sqlite-wrapper>=0.1
+rank-bm25>=0.2
+jieba>=0.42
+ollama>=0.1
+httpx>=0.25
+numpy>=1.24
