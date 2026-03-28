@@ -56,7 +56,18 @@ class CompressionStage:
                 if content.endswith("```"):
                     content = content[:-3]
                 content = content.strip()
+            
+            # Handle various JSON wrappers
             data = json.loads(content)
+            
+            # Unwrap common wrappers
+            if isinstance(data, dict):
+                if "memory_units" in data:
+                    data = data["memory_units"]
+                elif "memory_unit" in data:
+                    data = data["memory_unit"]
+                elif "data" in data:
+                    data = data["data"]
             
             memories = []
             items = data if isinstance(data, list) else [data]
