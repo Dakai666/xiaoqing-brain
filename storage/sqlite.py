@@ -80,6 +80,25 @@ class SQLiteStorage:
             )
             return [self._row_to_memory(row) for row in cursor.fetchall()]
 
+    def get_by_date_range(self, start_date: str, end_date: Optional[str] = None) -> List[MemoryUnit]:
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            if end_date:
+                cursor = conn.execute(
+                    "SELECT * FROM memories WHERE date >= ? AND date <= ? ORDER BY timestamp DESC",
+                    (start_date, end_date)
+                )
+            else:
+                cursor = conn.execute(
+                    "SELECT * FROM memories WHERE date = ? ORDER BY timestamp DESC",
+                    (start_date,)
+                )
+            return [self._row_to_memory(row) for row in cursor.fetchall()]
+
+    def get_today_memories(self) -> List[MemoryUnit]:
+        today = datetime.now().strftime("%Y-%m-%d")
+        return self.get_by_date_range(today)
+
     def _row_to_memory(self, row: sqlite3.Row) -> MemoryUnit:
         return MemoryUnit(
             id=row["id"],

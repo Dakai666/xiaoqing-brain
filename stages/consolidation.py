@@ -3,6 +3,7 @@ from datetime import datetime, timedelta
 from typing import List, Dict, Optional
 from ..models.memory_unit import MemoryUnit
 from ..storage.sqlite import SQLiteStorage
+from ..storage.markdown import MarkdownBackup
 from ..stages.synthesis import SynthesisStage
 
 
@@ -11,10 +12,12 @@ class ConsolidationScheduler:
         self,
         sqlite: SQLiteStorage,
         synthesis: SynthesisStage,
+        markdown_backup: Optional[MarkdownBackup] = None,
         interval_hours: int = 24
     ):
         self.sqlite = sqlite
         self.synthesis = synthesis
+        self.markdown = markdown_backup or MarkdownBackup()
         self.interval_hours = interval_hours
         self.last_run: Optional[datetime] = None
         self._running = False
@@ -35,27 +38,52 @@ class ConsolidationScheduler:
         
         try:
             today = datetime.now().strftime("%Y-%m-%d")
-            memories = self.sqlite.get_by_topic("general") + \
-                      self.sqlite.get_by_topic("preference") + \
-                      self.sqlite.get_by_topic("personal")
             
+            # 只取出**當天**的記憶，避免混入過去事件
+            all_memories = self.sqlite.get_by_topic("general") + \
+                          self.sqlite.get_by_topic("preference") + \
+                          self.sqlite.get_by_topic("personal") + \
+                          self.sqlite.get_by_topic("diary")
+            
+            # 過濾：只保留今天的記憶
+            today_memories = [m for m in all_memories if m.date == today]
+            
+            # 排除已有"日記"關鍵詞的記憶（避免重複整合）
+            today_memories = [m for m in today_memories if "日記" not in m.keywords]
+            
+            # 按 session_id 分組
             session_groups: Dict[str, List[MemoryUnit]] = {}
-            for m in memories:
+            for m in today_memories:
                 if m.session_id not in session_groups:
                     session_groups[m.session_id] = []
                 session_groups[m.session_id].append(m)
             
             consolidated: Dict[str, List[MemoryUnit]] = {}
+            total_diary_entries = 0
             
             for session_id, session_memories in session_groups.items():
                 if len(session_memories) >= 2:
+                    # 對同一 session 的多筆記憶進行整合
                     result = await self.synthesis.process(session_memories)
+                    
+                    # 為每個整合後的記憶加上"日記"關鍵詞
+                    for m in result:
+                        if "日記" not in m.keywords:
+                            m.keywords.append("日記")
+                        m.topic = "diary"
+                        m.session_id = f"diary-{today}"
+                        # 寫入儲存
+                        self.sqlite.add(m)
+                        self.markdown.add_memory(m)
+                        total_diary_entries += 1
+                    
                     consolidated[session_id] = result
                 else:
                     consolidated[session_id] = session_memories
             
             self.last_run = datetime.now()
             
+            print(f"Consolidation 完成: {total_diary_entries} 筆日記寫入 (今天: {today})")
             return consolidated
         finally:
             self._running = False

@@ -41,6 +41,7 @@ class LanceDBStorage:
             pa.field("vector", pa.list_(pa.float32(), self.embed_dim)),
             pa.field("keywords", pa.list_(pa.string())),
             pa.field("timestamp", pa.string()),
+            pa.field("date", pa.string()),
             pa.field("persons", pa.list_(pa.string())),
             pa.field("topic", pa.string()),
             pa.field("session_id", pa.string()),
@@ -68,6 +69,7 @@ class LanceDBStorage:
             "vector": vector,
             "keywords": memory.keywords,
             "timestamp": memory.timestamp,
+            "date": memory.date,
             "persons": memory.persons,
             "topic": memory.topic,
             "session_id": memory.session_id,
@@ -86,6 +88,7 @@ class LanceDBStorage:
                 lossless_text=r["lossless_text"],
                 keywords=r["keywords"],
                 timestamp=r["timestamp"],
+                date=r.get("date", r["timestamp"][:10] if r.get("timestamp") else ""),
                 persons=r["persons"],
                 topic=r["topic"],
                 session_id=r["session_id"],
@@ -101,12 +104,20 @@ class LanceDBStorage:
         filtered = [r for r in results if person in r.get("persons", [])]
         return [self._row_to_memory(r) for r in filtered]
 
+    async def get_by_date_range(self, start_date: str, end_date: Optional[str] = None) -> List[MemoryUnit]:
+        if end_date:
+            results = self.db["memories"].search(None, vector_column_name="vector").where(f"date >= '{start_date}' AND date <= '{end_date}'").limit(100).to_list()
+        else:
+            results = self.db["memories"].search(None, vector_column_name="vector").where(f"date = '{start_date}'").limit(100).to_list()
+        return [self._row_to_memory(r) for r in results]
+
     def _row_to_memory(self, row: dict) -> MemoryUnit:
         return MemoryUnit(
             id=row["id"],
             lossless_text=row["lossless_text"],
             keywords=row["keywords"],
             timestamp=row["timestamp"],
+            date=row.get("date", row["timestamp"][:10] if row.get("timestamp") else ""),
             persons=row["persons"],
             topic=row["topic"],
             session_id=row["session_id"],

@@ -15,6 +15,7 @@ from brain.stages.consolidation import ConsolidationScheduler
 from brain.stages.synthesis import SynthesisStage
 from brain.storage.sqlite import SQLiteStorage
 from brain.retrieval.hybrid import HybridRetriever
+from brain.retrieval.intent import IntentAwareRetrieval
 from brain.utils.llm_backend import MiniMaxBackend, set_llm_backend
 
 
@@ -89,13 +90,15 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
 
 async def _memory_search(query: str, top_k: int) -> list[TextContent]:
     retriever = HybridRetriever()
-    results = await retriever.search(query, top_k)
+    intent_retriever = IntentAwareRetrieval(retriever)
+    results = await intent_retriever.search(query, top_k)
     
     output = []
-    for m in results.get("vector", []) + results.get("bm25", []):
+    for m in results.get("results", []):
+        time_distance = m.get_time_distance()
         output.append(TextContent(
             type="text",
-            text=f"[{m.topic}] {m.lossless_text}\n關鍵詞: {', '.join(m.keywords)}\n時間: {m.timestamp}"
+            text=f"[{m.topic}] {m.lossless_text}\n關鍵詞: {', '.join(m.keywords)}\n時間: {time_distance} ({m.timestamp})"
         ))
     
     return output if output else [TextContent(type="text", text="找不到相關記憶")]
@@ -120,9 +123,10 @@ async def _memory_get_by_topic(topic: str) -> list[TextContent]:
     
     output = []
     for m in results:
+        time_distance = m.get_time_distance()
         output.append(TextContent(
             type="text",
-            text=f"[{m.topic}] {m.lossless_text}\n關鍵詞: {', '.join(m.keywords)}\n時間: {m.timestamp}"
+            text=f"[{m.topic}] {m.lossless_text}\n關鍵詞: {', '.join(m.keywords)}\n時間: {time_distance} ({m.timestamp})"
         ))
     
     return output if output else [TextContent(type="text", text=f"找不到主題為 {topic} 的記憶")]
@@ -134,9 +138,10 @@ async def _memory_get_by_person(person: str) -> list[TextContent]:
     
     output = []
     for m in results:
+        time_distance = m.get_time_distance()
         output.append(TextContent(
             type="text",
-            text=f"[{m.topic}] {m.lossless_text}\n關鍵詞: {', '.join(m.keywords)}\n時間: {m.timestamp}"
+            text=f"[{m.topic}] {m.lossless_text}\n關鍵詞: {', '.join(m.keywords)}\n時間: {time_distance} ({m.timestamp})"
         ))
     
     return output if output else [TextContent(type="text", text=f"找不到與 {person} 相關的記憶")]
@@ -153,7 +158,8 @@ async def main():
     
     sqlite = SQLiteStorage()
     synthesis = SynthesisStage(model="MiniMax-M2.7")
-    scheduler = ConsolidationScheduler(sqlite, synthesis, interval_hours=24)
+    markdown_backup = MarkdownBackup()
+    scheduler = ConsolidationScheduler(sqlite, synthesis, markdown_backup, interval_hours=24)
     scheduler.start()
     
     async with stdio_server() as (read_stream, write_stream):

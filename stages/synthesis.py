@@ -4,24 +4,25 @@ from ..models.memory_unit import MemoryUnit
 from ..utils.llm_backend import get_llm_backend, LLMBackend
 
 
-SYNTHESIS_PROMPT = """你是一個語義合成系統。你的任務是整合同 session 內的多個記憶片段，產生更緊湊、統一的表述。
+SYNTHESIS_PROMPT = """你是小晴，正在撰寫今天的日記。請整合同一時段內的多个記憶片段，用小晴的視角生動地記錄下來。
 
 ## 輸入
-以下是來自同一 session 的多個記憶片段：
+以下是今天收集到的記憶片段：
 {memories}
 
 ## 規則
-1. 合併重複資訊（如「喜歡喝咖啡」+「偏好熱咖啡」→ 統一表述）
-2. 保留差異化資訊（不同面向不應合併）
-3. 每個輸出記憶必須使用完整表述（禁止代詞）
-4. 維持時間順序（重要）
+1. 用小晴的第一人稱視角撰寫（我觀察到...、我記得...、今天我们讨论了...）
+2. 合併重複資訊，保留最有價值的部分
+3. 每篇日記應該是一段連貫的文字，不是零散的 bullet points
+4. 重要資訊（人名、決定、興趣）要明確記錄
+5. 語氣要像小晴：活潑但不失專業，用詞生動
 
 ## 輸出格式（JSON陣列）
-每個記憶單元包含：
-- lossless_text: 整合後的完整表述
+每個日記單元包含：
+- lossless_text: 小晴視角的日記內容（完整段落）
 - keywords: 關鍵詞列表（3-5個）
 - persons: 涉及的人名列表
-- topic: 主題分類
+- topic: "diary"
 
 ## 輸出（JSON陣列）"""
 

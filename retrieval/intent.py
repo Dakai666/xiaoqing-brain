@@ -97,9 +97,39 @@ class IntentRetriever:
             "method": "hybrid"
         }
 
+    def _apply_time_filter(self, memories: List[MemoryUnit], time_range: str) -> List[MemoryUnit]:
+        if not time_range or time_range == "all":
+            return memories
+        
+        now = datetime.now()
+        today = now.date()
+        
+        def in_range(m: MemoryUnit) -> bool:
+            try:
+                mem_time = datetime.fromisoformat(m.timestamp.replace("Z", "+00:00"))
+                if hasattr(mem_time, 'tzinfo') and mem_time.tzinfo is not None:
+                    mem_time = mem_time.replace(tzinfo=None)
+                mem_date = mem_time.date()
+                delta = (today - mem_date).days
+                
+                if time_range == "today":
+                    return delta == 0
+                elif time_range == "week":
+                    return 0 <= delta <= 7
+                elif time_range == "month":
+                    return 0 <= delta <= 30
+                elif time_range == "older":
+                    return delta > 30
+                return True
+            except (ValueError, TypeError):
+                return False
+        
+        return [m for m in memories if in_range(m)]
+
     async def _complex_search(self, query: str, intent: dict, top_k: int) -> dict:
         keywords = intent.get("search_keywords", [])
         filters = intent.get("filters", {})
+        time_range = filters.get("time_range", "all")
         
         all_results = []
         
@@ -116,12 +146,17 @@ class IntentRetriever:
                 person_results = await self.hybrid.lancedb.get_by_person(person)
                 all_results.extend(person_results)
         
+        # 去除重複
         seen = set()
         unique_results = []
         for m in all_results:
             if m.id not in seen:
                 seen.add(m.id)
                 unique_results.append(m)
+        
+        # 應用時間範圍過濾
+        if time_range != "all":
+            unique_results = self._apply_time_filter(unique_results, time_range)
         
         return {
             "results": unique_results[:top_k],
