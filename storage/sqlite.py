@@ -32,13 +32,14 @@ class SQLiteStorage:
     def add(self, memory: MemoryUnit) -> str:
         with sqlite3.connect(self.db_path) as conn:
             conn.execute("""
-                INSERT INTO memories (id, lossless_text, keywords, timestamp, persons, topic, session_id, provenance, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO memories (id, lossless_text, keywords, timestamp, date, persons, topic, session_id, provenance, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 memory.id,
                 memory.lossless_text,
                 json.dumps(memory.keywords),
                 memory.timestamp,
+                memory.date,
                 json.dumps(memory.persons),
                 memory.topic,
                 memory.session_id,
@@ -105,6 +106,7 @@ class SQLiteStorage:
             lossless_text=row["lossless_text"],
             keywords=json.loads(row["keywords"]),
             timestamp=row["timestamp"],
+            date=row["date"] if row["date"] else row["timestamp"][:10],
             persons=json.loads(row["persons"]),
             topic=row["topic"],
             session_id=row["session_id"],
