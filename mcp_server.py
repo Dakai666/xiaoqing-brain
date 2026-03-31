@@ -14,8 +14,9 @@ from brain.stages.compression import CompressionStage
 from brain.stages.consolidation import ConsolidationScheduler
 from brain.stages.synthesis import SynthesisStage
 from brain.storage.sqlite import SQLiteStorage
+from brain.storage.markdown import MarkdownBackup
 from brain.retrieval.hybrid import HybridRetriever
-from brain.retrieval.intent import IntentAwareRetrieval
+from brain.retrieval.intent import IntentRetriever
 from brain.utils.llm_backend import MiniMaxBackend, set_llm_backend
 
 
@@ -90,7 +91,7 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
 
 async def _memory_search(query: str, top_k: int) -> list[TextContent]:
     retriever = HybridRetriever()
-    intent_retriever = IntentAwareRetrieval(retriever)
+    intent_retriever = IntentRetriever(retriever)
     results = await intent_retriever.search(query, top_k)
     
     output = []

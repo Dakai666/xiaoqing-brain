@@ -1,5 +1,5 @@
 import json
-from typing import Optional
+from typing import List, Optional
 from ..models.memory_unit import MemoryUnit
 from ..retrieval.hybrid import HybridRetriever
 from ..utils.llm_backend import get_llm_backend, LLMBackend
