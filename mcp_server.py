@@ -27,6 +27,14 @@ server = Server("xiaoqing-memory")
 async def list_tools() -> list[Tool]:
     return [
         Tool(
+            name="memory_health",
+            description="檢查小晴記憶系統健康狀態",
+            inputSchema={
+                "type": "object",
+                "properties": {}
+            }
+        ),
+        Tool(
             name="memory_search",
             description="搜尋小晴的記憶",
             inputSchema={
@@ -77,7 +85,9 @@ async def list_tools() -> list[Tool]:
 
 @server.call_tool()
 async def call_tool(name: str, arguments: dict) -> list[TextContent]:
-    if name == "memory_search":
+    if name == "memory_health":
+        return await _memory_health()
+    elif name == "memory_search":
         return await _memory_search(arguments["query"], arguments.get("top_k", 5))
     elif name == "memory_add":
         return await _memory_add(arguments["session_id"], arguments["content"])
@@ -87,6 +97,23 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
         return await _memory_get_by_person(arguments["person"])
     else:
         raise ValueError(f"Unknown tool: {name}")
+
+
+async def _memory_health() -> list[TextContent]:
+    try:
+        sqlite = SQLiteStorage()
+        total = len(sqlite.search('', 1000))
+        today_memories = sqlite.get_today_memories()
+        
+        status_parts = [
+            f"✅ 記憶系統正常運作",
+            f"總記憶: {total} 筆",
+            f"今日新增: {len(today_memories)} 筆",
+        ]
+        
+        return [TextContent(type="text", text="\n".join(status_parts))]
+    except Exception as e:
+        return [TextContent(type="text", text=f"❌ 記憶系統錯誤: {str(e)}")]
 
 
 async def _memory_search(query: str, top_k: int) -> list[TextContent]:
@@ -148,20 +175,45 @@ async def _memory_get_by_person(person: str) -> list[TextContent]:
     return output if output else [TextContent(type="text", text=f"找不到與 {person} 相關的記憶")]
 
 
+def _write_health_status(status: str, error: str = None):
+    status_file = '/home/user/.kimaki/projects/xiaoqing/data/brain_mcp_status.json'
+    import json
+    from datetime import datetime
+    data = {
+        "status": status,
+        "error": error,
+        "last_check": datetime.now().isoformat()
+    }
+    try:
+        with open(status_file, 'w') as f:
+            json.dump(data, f)
+    except Exception:
+        pass
+
+
 async def main():
-    with open('/home/user/.kimaki/projects/xiaoqing/.env', 'r') as f:
-        for line in f:
-            if line.startswith('MINIMAX_API_KEY='):
-                os.environ['MINIMAX_API_KEY'] = line.strip().split('=', 1)[1]
-                break
-    
-    set_llm_backend(MiniMaxBackend())
-    
-    sqlite = SQLiteStorage()
-    synthesis = SynthesisStage(model="MiniMax-M2.7")
-    markdown_backup = MarkdownBackup()
-    scheduler = ConsolidationScheduler(sqlite, synthesis, markdown_backup, interval_hours=24)
-    scheduler.start()
+    try:
+        with open('/home/user/.kimaki/projects/xiaoqing/.env', 'r') as f:
+            for line in f:
+                if line.startswith('MINIMAX_API_KEY='):
+                    os.environ['MINIMAX_API_KEY'] = line.strip().split('=', 1)[1]
+                    break
+        
+        set_llm_backend(MiniMaxBackend())
+        
+        sqlite = SQLiteStorage()
+        synthesis = SynthesisStage(model="MiniMax-M2.7")
+        markdown_backup = MarkdownBackup()
+        scheduler = ConsolidationScheduler(sqlite, synthesis, markdown_backup, interval_hours=24)
+        scheduler.start()
+        
+        _write_health_status("running")
+        print("MCP Server started successfully", flush=True, file=sys.stderr)
+        
+    except Exception as e:
+        _write_health_status("error", str(e))
+        print(f"MCP Server startup failed: {e}", flush=True, file=sys.stderr)
+        raise
     
     async with stdio_server() as (read_stream, write_stream):
         await server.run(
