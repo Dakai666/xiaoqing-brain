@@ -10,7 +10,8 @@ COMPRESSION_PROMPT = """從對話中提取值得保存的資訊，轉換為 JSON
 - lossless_text: 完整、無歧義的表述
 - keywords: 關鍵詞列表
 - persons: 涉及的人名
-- topic: 主題分類
+- topic: 主題分類，必須是以下之一：
+  personal, technical, preference, project, event, decision, learning, routine, general
 
 對話：{input}
 
