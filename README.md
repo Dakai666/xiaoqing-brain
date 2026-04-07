@@ -62,6 +62,12 @@ pip install -r requirements.txt
 
 ```json
 {
+  "name": "memory_health",
+  "description": "檢查小晴記憶系統健康狀態",
+  "inputSchema": {}
+}
+
+{
   "name": "memory_search",
   "description": "搜尋小晴的記憶",
   "inputSchema": {
@@ -94,6 +100,15 @@ pip install -r requirements.txt
     "person": "string"
   }
 }
+
+{
+  "name": "memory_get_context",
+  "description": "取得上下文相關的記憶，方便小晴在回覆時引用（主動記憶注入）",
+  "inputSchema": {
+    "context": "string",
+    "top_k": "integer (optional, default: 3)"
+  }
+}
 ```
 
 ## 效能數據
@@ -121,6 +136,30 @@ TOPICS = {
     "general",       # 一般（預設）
 }
 ```
+
+## 記憶元數據
+
+每筆記憶攜帶豐富的元數據：
+
+```python
+class MemoryUnit:
+    intent_type: IntentType  # fact, impression, preference, habit
+    source_reliability: float  # 0.6-1.0
+    decay_rate: DecayRate  # fast(50%/天), normal(10%/天), slow(2%/天), none
+    confidence: float  # 0.0-1.0，隨時間衰減
+    is_superseded: bool  # 是否被新記憶取代
+    replaced_by: str  # 取代者 ID
+    needs_confirmation: bool  # 是否需用戶確認
+```
+
+### Decay 公式
+
+| 等級 | 衰減率 | 範例 |
+|------|--------|------|
+| fast | 50%/天 | 天氣、新聞 |
+| normal | 10%/天 | 一般對話 |
+| slow | 2%/天 | 偏好、習慣 |
+| none | 0% | 身份、永久事實 |
 
 ## 使用方式
 
@@ -167,6 +206,7 @@ python brain/mcp_server.py
 - `memory.add(session_id, content)` - 新增記憶
 - `memory.get_by_topic(topic)` - 依主題取得
 - `memory.get_by_person(person)` - 依人員取得
+- `memory.get_context(context, top_k)` - 主動記憶注入（回傳時間距離+信心度）
 
 ## 測試腳本
 
@@ -199,11 +239,11 @@ PYTHONPATH=. python scripts/test_mcp.py
   - [x] 小晴本體成功呼叫 MCP Tools
   - [x] 成功記憶 Dakai 的個人資料
 
-- [x] Phase 4: 優化（逐步進行中）
+- [x] Phase 4: 優化 ✅ 2026-04-08
   - [x] 修復 LanceDB query API 相容性問題
-  - [ ] 自動記憶注入（依情境主動注入相關記憶到上下文）
-  - [ ] 記憶 decay 機制
-  - [ ] 衝突解決策略
+  - [x] 自動記憶注入（memory_get_context tool）
+  - [x] 記憶 decay 機制（A2）
+  - [x] 衝突解決策略（A3）
   - [ ] 壓縮率統計
 
 ---
