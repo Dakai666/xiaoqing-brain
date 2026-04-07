@@ -6,7 +6,7 @@ sys.path.insert(0, '/home/user/.kimaki/projects/xiaoqing')
 
 import asyncio
 from mcp.server import Server
-from mcp.types import Tool, TextContent
+from mcp.types import Tool, TextContent, Prompt
 from mcp.server.stdio import stdio_server
 
 from brain.models.memory_unit import MemoryUnit
@@ -21,6 +21,11 @@ from brain.utils.llm_backend import MiniMaxBackend, set_llm_backend
 
 
 server = Server("xiaoqing-memory")
+
+
+@server.list_prompts()
+async def list_prompts() -> list[Prompt]:
+    return []
 
 
 @server.list_tools()
