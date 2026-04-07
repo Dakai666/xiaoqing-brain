@@ -24,6 +24,8 @@ class SQLiteStorage:
                     session_id TEXT NOT NULL,
                     provenance TEXT,
                     created_at TEXT NOT NULL,
+                    intent_type TEXT DEFAULT 'fact',
+                    source_reliability REAL DEFAULT 1.0,
                     decay_rate TEXT DEFAULT 'normal',
                     confidence REAL DEFAULT 1.0,
                     last_accessed TEXT,
@@ -35,12 +37,13 @@ class SQLiteStorage:
             conn.execute("CREATE INDEX IF NOT EXISTS idx_session ON memories(session_id)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_date ON memories(date)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_confidence ON memories(confidence)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_intent ON memories(intent_type)")
 
     def add(self, memory: MemoryUnit) -> str:
         with sqlite3.connect(self.db_path) as conn:
             conn.execute("""
-                INSERT INTO memories (id, lossless_text, keywords, timestamp, date, persons, topic, session_id, provenance, created_at, decay_rate, confidence, last_accessed, access_count)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO memories (id, lossless_text, keywords, timestamp, date, persons, topic, session_id, provenance, created_at, intent_type, source_reliability, decay_rate, confidence, last_accessed, access_count)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 memory.id,
                 memory.lossless_text,
@@ -52,6 +55,8 @@ class SQLiteStorage:
                 memory.session_id,
                 memory.provenance,
                 datetime.now().isoformat(),
+                memory.intent_type.value,
+                memory.source_reliability,
                 memory.decay_rate.value,
                 memory.confidence,
                 memory.last_accessed,
@@ -120,9 +125,11 @@ class SQLiteStorage:
             return cursor.rowcount > 0
 
     def _row_to_memory(self, row: sqlite3.Row) -> MemoryUnit:
-        from ..models.memory_unit import DecayRate
+        from ..models.memory_unit import DecayRate, IntentType
         decay_rate_val = row["decay_rate"] if "decay_rate" in row.keys() else "normal"
         confidence_val = row["confidence"] if "confidence" in row.keys() else 1.0
+        intent_type_val = row["intent_type"] if "intent_type" in row.keys() else "fact"
+        source_reliability_val = row["source_reliability"] if "source_reliability" in row.keys() else 1.0
         return MemoryUnit(
             id=row["id"],
             lossless_text=row["lossless_text"],
@@ -133,6 +140,8 @@ class SQLiteStorage:
             topic=row["topic"],
             session_id=row["session_id"],
             provenance=row["provenance"],
+            intent_type=IntentType(intent_type_val),
+            source_reliability=float(source_reliability_val),
             decay_rate=DecayRate(decay_rate_val),
             confidence=float(confidence_val),
             last_accessed=row["last_accessed"] if "last_accessed" in row.keys() else None,

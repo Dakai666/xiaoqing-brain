@@ -5,6 +5,13 @@ from enum import Enum
 import uuid
 
 
+class IntentType(str, Enum):
+    FACT = "fact"        # 用戶明確陳述的事實
+    IMPRESSION = "impression"  # 推斷、印象、猜測
+    PREFERENCE = "preference"  # 偏好、喜歡、厭惡
+    HABIT = "habit"      # 習慣、日常行為
+
+
 class DecayRate(str, Enum):
     FAST = "fast"      # 天氣、新聞 - 每天衰減 50%
     NORMAL = "normal"  # 一般資訊 - 每天衰減 10%
@@ -20,6 +27,15 @@ DECAY_MULTIPLIERS = {
 }
 
 
+# 預設 source_reliability
+DEFAULT_RELIABILITY = {
+    IntentType.FACT: 1.0,
+    IntentType.IMPRESSION: 0.6,
+    IntentType.PREFERENCE: 0.9,
+    IntentType.HABIT: 0.85,
+}
+
+
 class MemoryUnit(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     lossless_text: str
@@ -31,6 +47,8 @@ class MemoryUnit(BaseModel):
     session_id: str = ""
     provenance: Optional[str] = None
     
+    intent_type: IntentType = IntentType.FACT
+    source_reliability: float = 1.0
     decay_rate: DecayRate = DecayRate.NORMAL
     confidence: float = 1.0
     last_accessed: Optional[str] = None

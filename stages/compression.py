@@ -12,6 +12,11 @@ COMPRESSION_PROMPT = """從對話中提取值得保存的資訊，轉換為 JSON
 - persons: 涉及的人名
 - topic: 主題分類，必須是以下之一：
   personal, technical, preference, project, event, decision, learning, routine, general
+- intent_type: 意圖類型，必須是以下之一：
+  fact（用戶明確陳述的事實，如「我叫小明」）
+  impression（推斷、印象、猜測，如「他好像喜歡喝茶」）
+  preference（偏好、喜歡、厭惡，如「我不喜歡雨天」）
+  habit（習慣、日常行為，如「我每天早上運動」）
 - decay_rate: 衰減速度，必須是以下之一：
   fast（天氣、新闻、當下事件 - 每天衰減50%）
   normal（一般對話、日常資訊 - 每天衰減10%）
@@ -88,6 +93,8 @@ class CompressionStage:
                             unit_data["keywords"] = [kw] if kw else []
                         if "decay_rate" not in unit_data:
                             unit_data["decay_rate"] = "normal"
+                        if "intent_type" not in unit_data:
+                            unit_data["intent_type"] = "fact"
                         memories.append(MemoryUnit(**unit_data))
             return memories
         except (json.JSONDecodeError, Exception) as e:
