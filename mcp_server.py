@@ -80,6 +80,18 @@ async def list_tools() -> list[Tool]:
                 "required": ["person"]
             }
         ),
+        Tool(
+            name="memory_get_context",
+            description="取得上下文相關的記憶，方便小晴在回覆時引用（主動記憶注入）",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "context": {"type": "string", "description": "當前對話情境或話題"},
+                    "top_k": {"type": "integer", "description": "回傳結果數量", "default": 3}
+                },
+                "required": ["context"]
+            }
+        ),
     ]
 
 
@@ -95,6 +107,8 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
         return await _memory_get_by_topic(arguments["topic"])
     elif name == "memory_get_by_person":
         return await _memory_get_by_person(arguments["person"])
+    elif name == "memory_get_context":
+        return await _memory_get_context(arguments["context"], arguments.get("top_k", 3))
     else:
         raise ValueError(f"Unknown tool: {name}")
 
@@ -173,6 +187,32 @@ async def _memory_get_by_person(person: str) -> list[TextContent]:
         ))
     
     return output if output else [TextContent(type="text", text=f"找不到與 {person} 相關的記憶")]
+
+
+async def _memory_get_context(context: str, top_k: int = 3) -> list[TextContent]:
+    retriever = HybridRetriever()
+    intent_retriever = IntentRetriever(retriever)
+    results = await intent_retriever.search(context, top_k)
+    
+    output = []
+    memories = results.get("results", [])
+    
+    if not memories:
+        return [TextContent(type="text", text="找不到相關的記憶")]
+    
+    lines = [f"找到 {len(memories)} 筆相關記憶："]
+    
+    for i, m in enumerate(memories, 1):
+        time_distance = m.get_time_distance()
+        confidence_pct = int(m.confidence * 100)
+        
+        lines.append(f"\n{i}. {m.lossless_text}")
+        lines.append(f"   💡 這是{time_distance}的事，信心度 {confidence_pct}%")
+        if m.keywords:
+            lines.append(f"   關鍵詞: {', '.join(m.keywords[:3])}")
+    
+    output.append(TextContent(type="text", text="\n".join(lines)))
+    return output
 
 
 def _write_health_status(status: str, error: str = None):
