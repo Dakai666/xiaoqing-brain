@@ -54,6 +54,10 @@ class MemoryUnit(BaseModel):
     last_accessed: Optional[str] = None
     access_count: int = 0
     
+    is_superseded: bool = False
+    replaced_by: Optional[str] = None
+    needs_confirmation: bool = False
+    
     @model_validator(mode="before")
     @classmethod
     def extract_date_from_timestamp(cls, data: dict) -> dict:

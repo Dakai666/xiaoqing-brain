@@ -29,7 +29,10 @@ class SQLiteStorage:
                     decay_rate TEXT DEFAULT 'normal',
                     confidence REAL DEFAULT 1.0,
                     last_accessed TEXT,
-                    access_count INTEGER DEFAULT 0
+                    access_count INTEGER DEFAULT 0,
+                    is_superseded INTEGER DEFAULT 0,
+                    replaced_by TEXT,
+                    needs_confirmation INTEGER DEFAULT 0
                 )
             """)
             conn.execute("CREATE INDEX IF NOT EXISTS idx_topic ON memories(topic)")
@@ -38,12 +41,13 @@ class SQLiteStorage:
             conn.execute("CREATE INDEX IF NOT EXISTS idx_date ON memories(date)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_confidence ON memories(confidence)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_intent ON memories(intent_type)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_superseded ON memories(is_superseded)")
 
     def add(self, memory: MemoryUnit) -> str:
         with sqlite3.connect(self.db_path) as conn:
             conn.execute("""
-                INSERT INTO memories (id, lossless_text, keywords, timestamp, date, persons, topic, session_id, provenance, created_at, intent_type, source_reliability, decay_rate, confidence, last_accessed, access_count)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO memories (id, lossless_text, keywords, timestamp, date, persons, topic, session_id, provenance, created_at, intent_type, source_reliability, decay_rate, confidence, last_accessed, access_count, is_superseded, replaced_by, needs_confirmation)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 memory.id,
                 memory.lossless_text,
@@ -60,7 +64,10 @@ class SQLiteStorage:
                 memory.decay_rate.value,
                 memory.confidence,
                 memory.last_accessed,
-                memory.access_count
+                memory.access_count,
+                1 if memory.is_superseded else 0,
+                memory.replaced_by,
+                1 if memory.needs_confirmation else 0
             ))
         return memory.id
 
@@ -146,4 +153,7 @@ class SQLiteStorage:
             confidence=float(confidence_val),
             last_accessed=row["last_accessed"] if "last_accessed" in row.keys() else None,
             access_count=int(row["access_count"]) if "access_count" in row.keys() else 0,
+            is_superseded=bool(row["is_superseded"]) if "is_superseded" in row.keys() else False,
+            replaced_by=row["replaced_by"] if "replaced_by" in row.keys() else None,
+            needs_confirmation=bool(row["needs_confirmation"]) if "needs_confirmation" in row.keys() else False,
         )

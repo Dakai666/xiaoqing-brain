@@ -51,6 +51,9 @@ class LanceDBStorage:
             pa.field("confidence", pa.float64()),
             pa.field("last_accessed", pa.string()),
             pa.field("access_count", pa.int64()),
+            pa.field("is_superseded", pa.bool_()),
+            pa.field("replaced_by", pa.string()),
+            pa.field("needs_confirmation", pa.bool_()),
         ])
 
     async def _embed(self, text: str) -> List[float]:
@@ -85,6 +88,9 @@ class LanceDBStorage:
             "confidence": memory.confidence,
             "last_accessed": memory.last_accessed,
             "access_count": memory.access_count,
+            "is_superseded": memory.is_superseded,
+            "replaced_by": memory.replaced_by,
+            "needs_confirmation": memory.needs_confirmation,
         }
         self.db["memories"].add([data])
         return memory.id
@@ -110,6 +116,9 @@ class LanceDBStorage:
                 confidence=r.get("confidence", 1.0),
                 last_accessed=r.get("last_accessed"),
                 access_count=r.get("access_count", 0),
+                is_superseded=r.get("is_superseded", False),
+                replaced_by=r.get("replaced_by"),
+                needs_confirmation=r.get("needs_confirmation", False),
             ))
         return memories
 
@@ -145,4 +154,7 @@ class LanceDBStorage:
             confidence=row.get("confidence", 1.0),
             last_accessed=row.get("last_accessed"),
             access_count=row.get("access_count", 0),
+            is_superseded=row.get("is_superseded", False),
+            replaced_by=row.get("replaced_by"),
+            needs_confirmation=row.get("needs_confirmation", False),
         )
