@@ -114,6 +114,36 @@ class ConsolidationScheduler:
                 pass
         print("ConsolidationScheduler stopped")
 
+    def apply_decay(self) -> dict:
+        all_memories = self.sqlite.search("", 10000)
+        decay_stats = {"fast": 0, "normal": 0, "slow": 0, "none": 0, "total_updated": 0}
+        
+        for m in all_memories:
+            if m.decay_rate.value == "none":
+                decay_stats["none"] += 1
+                continue
+            
+            if hasattr(m, 'last_accessed') and m.last_accessed:
+                last_acc = datetime.fromisoformat(m.last_accessed.replace("Z", "+00:00"))
+                if hasattr(last_acc, 'tzinfo') and last_acc.tzinfo:
+                    last_acc = last_acc.replace(tzinfo=None)
+                days = (datetime.now() - last_acc).days
+            else:
+                ts = m.timestamp.replace("Z", "+00:00")
+                ts_date = datetime.fromisoformat(ts).date()
+                days = (datetime.now().date() - ts_date).days
+            
+            old_conf = m.confidence
+            m.confidence = m.apply_decay(days)
+            
+            if abs(m.confidence - old_conf) > 0.001:
+                self.sqlite.update_confidence(m.id, m.confidence)
+                decay_stats["total_updated"] += 1
+                decay_stats[m.decay_rate.value] += 1
+        
+        print(f"Decay job 完成: 更新 {decay_stats['total_updated']} 筆記憶")
+        return decay_stats
+
     def get_stats(self) -> dict:
         all_memories = self.sqlite.search("", 10000)
         return {

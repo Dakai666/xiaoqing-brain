@@ -45,6 +45,10 @@ class LanceDBStorage:
             pa.field("persons", pa.list_(pa.string())),
             pa.field("topic", pa.string()),
             pa.field("session_id", pa.string()),
+            pa.field("decay_rate", pa.string()),
+            pa.field("confidence", pa.float64()),
+            pa.field("last_accessed", pa.string()),
+            pa.field("access_count", pa.int64()),
         ])
 
     async def _embed(self, text: str) -> List[float]:
@@ -73,6 +77,10 @@ class LanceDBStorage:
             "persons": memory.persons,
             "topic": memory.topic,
             "session_id": memory.session_id,
+            "decay_rate": memory.decay_rate.value,
+            "confidence": memory.confidence,
+            "last_accessed": memory.last_accessed,
+            "access_count": memory.access_count,
         }
         self.db["memories"].add([data])
         return memory.id
@@ -92,6 +100,10 @@ class LanceDBStorage:
                 persons=r["persons"],
                 topic=r["topic"],
                 session_id=r["session_id"],
+                decay_rate=r.get("decay_rate", "normal"),
+                confidence=r.get("confidence", 1.0),
+                last_accessed=r.get("last_accessed"),
+                access_count=r.get("access_count", 0),
             ))
         return memories
 
@@ -121,4 +133,8 @@ class LanceDBStorage:
             persons=row["persons"],
             topic=row["topic"],
             session_id=row["session_id"],
+            decay_rate=row.get("decay_rate", "normal"),
+            confidence=row.get("confidence", 1.0),
+            last_accessed=row.get("last_accessed"),
+            access_count=row.get("access_count", 0),
         )

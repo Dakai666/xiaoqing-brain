@@ -1,7 +1,23 @@
 from pydantic import BaseModel, Field, model_validator
 from typing import List, Optional
 from datetime import datetime, timedelta
+from enum import Enum
 import uuid
+
+
+class DecayRate(str, Enum):
+    FAST = "fast"      # 天氣、新聞 - 每天衰減 50%
+    NORMAL = "normal"  # 一般資訊 - 每天衰減 10%
+    SLOW = "slow"      # 偏好、習慣 - 每天衰減 2%
+    NONE = "none"      # 身份、永久事實 - 不衰減
+
+
+DECAY_MULTIPLIERS = {
+    DecayRate.FAST: 0.5,
+    DecayRate.NORMAL: 0.1,
+    DecayRate.SLOW: 0.02,
+    DecayRate.NONE: 0.0,
+}
 
 
 class MemoryUnit(BaseModel):
@@ -14,7 +30,12 @@ class MemoryUnit(BaseModel):
     topic: str = "general"
     session_id: str = ""
     provenance: Optional[str] = None
-
+    
+    decay_rate: DecayRate = DecayRate.NORMAL
+    confidence: float = 1.0
+    last_accessed: Optional[str] = None
+    access_count: int = 0
+    
     @model_validator(mode="before")
     @classmethod
     def extract_date_from_timestamp(cls, data: dict) -> dict:
@@ -26,6 +47,19 @@ class MemoryUnit(BaseModel):
             elif "date" not in data:
                 data["date"] = datetime.now().strftime("%Y-%m-%d")
         return data
+    
+    def apply_decay(self, days: int) -> float:
+        if self.decay_rate == DecayRate.NONE or self.confidence <= 0:
+            return self.confidence
+        
+        daily_decay = DECAY_MULTIPLIERS[self.decay_rate]
+        new_confidence = self.confidence * ((1 - daily_decay) ** days)
+        return max(0.0, new_confidence)
+    
+    def record_access(self):
+        self.last_accessed = datetime.now().isoformat()
+        self.access_count += 1
+        self.confidence = min(1.0, self.confidence + 0.05)
 
     def get_time_distance(self, now: Optional[datetime] = None) -> str:
         if now is None:
