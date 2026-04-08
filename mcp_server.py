@@ -18,9 +18,18 @@ from brain.storage.markdown import MarkdownBackup
 from brain.retrieval.hybrid import HybridRetriever
 from brain.retrieval.intent import IntentRetriever
 from brain.utils.llm_backend import MiniMaxBackend, set_llm_backend
+from brain.accounting import AccountingService
 
 
 server = Server("xiaoqing-memory")
+_accounting_service = None
+
+
+def get_accounting_service():
+    global _accounting_service
+    if _accounting_service is None:
+        _accounting_service = AccountingService()
+    return _accounting_service
 
 
 @server.list_prompts()
@@ -97,6 +106,44 @@ async def list_tools() -> list[Tool]:
                 "required": ["context"]
             }
         ),
+        Tool(
+            name="accounting_add",
+            description="新增一筆帳目記錄（支援自然語言或結構化輸入）",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "text": {"type": "string", "description": "帳目描述，例如「今天中午吃飯花了120元」或「expense:120:food:午餐」"},
+                    "session_id": {"type": "string", "description": "對話 session ID"}
+                },
+                "required": ["text", "session_id"]
+            }
+        ),
+        Tool(
+            name="accounting_summary",
+            description="取得本月記帳摘要（收入/支出/分類統計）",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "days": {"type": "integer", "description": "查詢天數範圍", "default": 30}
+                }
+            }
+        ),
+        Tool(
+            name="accounting_today",
+            description="取得今天的所有記帳記錄",
+            inputSchema={
+                "type": "object",
+                "properties": {}
+            }
+        ),
+        Tool(
+            name="accounting_all",
+            description="取得所有記帳記錄（最近50筆）",
+            inputSchema={
+                "type": "object",
+                "properties": {}
+            }
+        ),
     ]
 
 
@@ -114,6 +161,14 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
         return await _memory_get_by_person(arguments["person"])
     elif name == "memory_get_context":
         return await _memory_get_context(arguments["context"], arguments.get("top_k", 3))
+    elif name == "accounting_add":
+        return await _accounting_add(arguments["text"], arguments["session_id"])
+    elif name == "accounting_summary":
+        return await _accounting_summary(arguments.get("days", 30))
+    elif name == "accounting_today":
+        return await _accounting_today()
+    elif name == "accounting_all":
+        return await _accounting_all()
     else:
         raise ValueError(f"Unknown tool: {name}")
 
@@ -198,26 +253,53 @@ async def _memory_get_context(context: str, top_k: int = 3) -> list[TextContent]
     retriever = HybridRetriever()
     intent_retriever = IntentRetriever(retriever)
     results = await intent_retriever.search(context, top_k)
-    
+
     output = []
     memories = results.get("results", [])
-    
+
     if not memories:
         return [TextContent(type="text", text="找不到相關的記憶")]
-    
+
     lines = [f"找到 {len(memories)} 筆相關記憶："]
-    
+
     for i, m in enumerate(memories, 1):
         time_distance = m.get_time_distance()
         confidence_pct = int(m.confidence * 100)
-        
+
         lines.append(f"\n{i}. {m.lossless_text}")
         lines.append(f"   💡 這是{time_distance}的事，信心度 {confidence_pct}%")
         if m.keywords:
             lines.append(f"   關鍵詞: {', '.join(m.keywords[:3])}")
-    
+
     output.append(TextContent(type="text", text="\n".join(lines)))
     return output
+
+
+async def _accounting_add(text: str, session_id: str) -> list[TextContent]:
+    svc = get_accounting_service()
+    ok, msg, tx = svc.add_transaction(text, session_id)
+    if ok:
+        return [TextContent(type="text", text=f"✅ {msg}")]
+    else:
+        return [TextContent(type="text", text=f"❌ {msg}")]
+
+
+async def _accounting_summary(days: int) -> list[TextContent]:
+    svc = get_accounting_service()
+    summary = svc.get_summary(days)
+    return [TextContent(type="text", text=summary)]
+
+
+async def _accounting_today() -> list[TextContent]:
+    svc = get_accounting_service()
+    result = svc.get_today()
+    return [TextContent(type="text", text=result)]
+
+
+async def _accounting_all() -> list[TextContent]:
+    svc = get_accounting_service()
+    result = svc.get_all()
+    return [TextContent(type="text", text=result)]
 
 
 def _write_health_status(status: str, error: str = None):
