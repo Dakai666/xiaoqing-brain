@@ -55,6 +55,8 @@ async def list_tools() -> list[Tool]:
                 "type": "object",
                 "properties": {
                     "query": {"type": "string", "description": "搜尋查詢"},
+                    "start_date": {"type": "string", "description": "開始日期 (YYYY-MM-DD)", "default": ""},
+                    "end_date": {"type": "string", "description": "結束日期 (YYYY-MM-DD)", "default": ""},
                     "top_k": {"type": "integer", "description": "回傳結果數量", "default": 5}
                 },
                 "required": ["query"]
@@ -152,7 +154,12 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
     if name == "memory_health":
         return await _memory_health()
     elif name == "memory_search":
-        return await _memory_search(arguments["query"], arguments.get("top_k", 5))
+        return await _memory_search(
+            arguments["query"],
+            arguments.get("top_k", 5),
+            arguments.get("start_date", ""),
+            arguments.get("end_date", "")
+        )
     elif name == "memory_add":
         return await _memory_add(arguments["session_id"], arguments["content"])
     elif name == "memory_get_by_topic":
@@ -190,13 +197,30 @@ async def _memory_health() -> list[TextContent]:
         return [TextContent(type="text", text=f"❌ 記憶系統錯誤: {str(e)}")]
 
 
-async def _memory_search(query: str, top_k: int) -> list[TextContent]:
+async def _memory_search(query: str, top_k: int, start_date: str = "", end_date: str = "") -> list[TextContent]:
     retriever = HybridRetriever()
-    intent_retriever = IntentRetriever(retriever)
-    results = await intent_retriever.search(query, top_k)
+    
+    results = []
+    
+    if start_date or end_date:
+        date_results = await retriever.lancedb.get_by_date_range(start_date or end_date, end_date)
+        if query and query.strip():
+            intent_retriever = IntentRetriever(retriever)
+            semantic_results = await intent_retriever.search(query, top_k * 2)
+            semantic_ids = {m.id for m in semantic_results.get("results", [])}
+            date_ids = {m.id for m in date_results}
+            intersection = semantic_ids & date_ids
+            results = [m for m in semantic_results.get("results", []) if m.id in intersection][:top_k]
+            if not results:
+                results = [m for m in date_results if m.id in semantic_ids][:top_k]
+        else:
+            results = date_results[:top_k]
+    else:
+        intent_retriever = IntentRetriever(retriever)
+        results = (await intent_retriever.search(query, top_k)).get("results", [])
     
     output = []
-    for m in results.get("results", []):
+    for m in results:
         time_distance = m.get_time_distance()
         output.append(TextContent(
             type="text",
