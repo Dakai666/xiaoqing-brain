@@ -53,16 +53,16 @@ Layer 1: Index ──→ Layer 2: Timeline ──→ Layer 3: Observation
   - [x] 單元測試：時間線完整性
   - [x] 集成測試：敘事脈絡驗證
 
-- [ ] **Phase 1.3**: 改造 `memory_search` tool
-  - [ ] 新增 `ids` 參數（list of IDs）
-  - [ ] 只對指定 ID 回傳完整內容
-  - [ ] 單元測試：ID 過濾正確
-  - [ ] Token 節省測量：目標 > 10x
+- [x] **Phase 1.3**: 改造 `memory_search` tool ✅ (2026-04-20)
+  - [x] 新增 `ids` 參數（list of IDs）
+  - [x] 只對指定 ID 回傳完整內容
+  - [x] 單元測試：ID 過濾正確
+  - [x] Token 節省測量：目標 > 10x
 
-- [ ] **Phase 1.4**: Token Budget UI
-  - [ ] 所有輸出顯示 token estimate
-  - [ ] 示例如：`| #2543 | ~155 tokens |`
-  - [ ] Validation：Agent 能根據 cost 做決策
+- [x] **Phase 1.4**: Token Budget UI ✅ (2026-04-20)
+  - [x] 所有輸出顯示 token estimate
+  - [x] 示例如：`| #2543 | ~155 tokens |`
+  - [x] Validation：Agent 能根據 cost 做決策
 
 ### 驗證方法
 
@@ -270,3 +270,4 @@ Month 2（平台整合）
 |------|------|----------|
 | 2026-04-20 | v0.1 | 初始規劃文件建立 |
 | 2026-04-20 | v0.2 | Phase 1.1 + 1.2 完成：memory_index + memory_timeline 上線 |
+| 2026-04-20 | v0.3 | Phase 1.3 + 1.4 完成：memory_search ids + Token Budget UI |
