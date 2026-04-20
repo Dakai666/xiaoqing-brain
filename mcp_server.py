@@ -49,6 +49,17 @@ async def list_tools() -> list[Tool]:
             }
         ),
         Tool(
+            name="memory_index",
+            description="取得記憶索引（Progressive Disclosure Layer 1）- 只回傳 ID、標題、時間、token 估計，不回傳完整內容。用於快速掃描決定是否需要深入。",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "limit": {"type": "integer", "description": "回傳數量上限", "default": 50},
+                    "date": {"type": "string", "description": "過濾特定日期 (YYYY-MM-DD)", "default": ""}
+                }
+            }
+        ),
+        Tool(
             name="memory_search",
             description="搜尋小晴的記憶",
             inputSchema={
@@ -153,6 +164,8 @@ async def list_tools() -> list[Tool]:
 async def call_tool(name: str, arguments: dict) -> list[TextContent]:
     if name == "memory_health":
         return await _memory_health()
+    elif name == "memory_index":
+        return await _memory_index(arguments.get("limit", 50), arguments.get("date", ""))
     elif name == "memory_search":
         return await _memory_search(
             arguments["query"],
@@ -195,6 +208,53 @@ async def _memory_health() -> list[TextContent]:
         return [TextContent(type="text", text="\n".join(status_parts))]
     except Exception as e:
         return [TextContent(type="text", text=f"❌ 記憶系統錯誤: {str(e)}")]
+
+
+async def _memory_index(limit: int, date: str) -> list[TextContent]:
+    """Progressive Disclosure Layer 1: 取得記憶索引"""
+    try:
+        retriever = HybridRetriever()
+        
+        index_entries = await retriever.lancedb.get_index(limit=limit, date=date if date else None)
+        
+        if not index_entries:
+            return [TextContent(type="text", text="沒有找到任何記憶")]
+        
+        lines = [
+            "## 小晴記憶索引（Progressive Disclosure Layer 1）",
+            "",
+            "**使用方式**：查看標題和 token 估計，決定是否需要深入 fetch 完整內容。",
+            "",
+            "| ID | 時間 | Icon | 標題 | ~Tokens |",
+            "|----|------|------|------|--------|",
+        ]
+        
+        for entry in index_entries:
+            intent_type = entry.get("intent_type", "fact")
+            icon = _get_icon_for_type(intent_type)
+            entry_id = entry["id"][:8]
+            time_str = entry.get("timestamp", "")[11:16] if entry.get("timestamp") else ""
+            date_str = entry.get("date", "")[5:] if entry.get("date") else ""
+            title = entry.get("title", "")[:50]
+            tokens = entry.get("token_estimate", 0)
+            
+            lines.append(f"| {entry_id} | {date_str} {time_str} | {icon} | {title} | ~{tokens} |")
+        
+        lines.append("")
+        lines.append("*使用 `memory_search` 並指定 IDs 參數來取得感興趣的完整內容*")
+        
+        return [TextContent(type="text", text="\n".join(lines))]
+    except Exception as e:
+        return [TextContent(type="text", text=f"❌ 取得索引失敗: {str(e)}")]
+
+
+def _get_icon_for_type(intent_type: str) -> str:
+    """對應 Icon 類型"""
+    try:
+        from brain.models.memory_unit import IntentType
+        return IntentType(intent_type).icon
+    except (ValueError, ImportError):
+        return "🔵"
 
 
 async def _memory_search(query: str, top_k: int, start_date: str = "", end_date: str = "") -> list[TextContent]:

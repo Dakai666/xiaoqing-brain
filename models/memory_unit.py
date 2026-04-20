@@ -11,6 +11,16 @@ class IntentType(str, Enum):
     PREFERENCE = "preference"  # 偏好、喜歡、厭惡
     HABIT = "habit"      # 習慣、日常行為
 
+    @property
+    def icon(self) -> str:
+        icons = {
+            "fact": "🔵",
+            "impression": "💫",
+            "preference": "🎯",
+            "habit": "🌱",
+        }
+        return icons.get(self.value, "🔵")
+
 
 class DecayRate(str, Enum):
     FAST = "fast"      # 天氣、新聞 - 每天衰減 50%

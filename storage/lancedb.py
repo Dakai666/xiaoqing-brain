@@ -138,6 +138,48 @@ class LanceDBStorage:
             results = self.db["memories"].search(None, vector_column_name="vector").where(f"date = '{start_date}'").limit(100).to_list()
         return [self._row_to_memory(r) for r in results]
 
+    async def get_index(self, limit: int = 50, date: str = None) -> List[dict]:
+        """取得記憶索引（不含 vector），用於 Progressive Disclosure Layer 1"""
+        query = self.db["memories"].search(None, vector_column_name="vector")
+        
+        if date:
+            query = query.where(f"date = '{date}'")
+        
+        results = query.limit(limit).to_list()
+        
+        index_entries = []
+        for r in results:
+            if r.get("is_superseded", False):
+                continue
+                
+            lossless_text = r.get("lossless_text", "")
+            index_entries.append({
+                "id": r["id"],
+                "title": self._extract_title(lossless_text),
+                "timestamp": r.get("timestamp", ""),
+                "date": r.get("date", r.get("timestamp", "")[:10] if r.get("timestamp") else ""),
+                "topic": r.get("topic", ""),
+                "intent_type": r.get("intent_type", "fact"),
+                "token_estimate": self._estimate_tokens(lossless_text),
+                "session_id": r.get("session_id", ""),
+            })
+        
+        return index_entries
+
+    def _extract_title(self, text: str, max_len: int = 60) -> str:
+        """從文字中提取標題（前 max_len 字元）"""
+        lines = text.strip().split("\n")
+        first_line = lines[0] if lines else text
+        if len(first_line) > max_len:
+            return first_line[:max_len - 3] + "..."
+        return first_line
+
+    def _estimate_tokens(self, text: str) -> int:
+        """Token 估計：中/日/韓 1.5，英文/數字/標點 1.0"""
+        cjk_chars = sum(1 for c in text if '\u4e00' <= c <= '\u9fff' or '\u3040' <= c <= '\u30ff' or '\uac00' <= c <= '\ud7af')
+        other_chars = len(text) - cjk_chars
+        return int(cjk_chars * 1.5 + other_chars * 1.0)
+
     def _row_to_memory(self, row: dict) -> MemoryUnit:
         return MemoryUnit(
             id=row["id"],
