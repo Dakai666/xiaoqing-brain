@@ -264,3 +264,5 @@ Month 2（平台整合）
 | 2026-04-20 | v0.2 | Phase 1.1 + 1.2 完成：memory_index + memory_timeline 上線 |
 | 2026-04-20 | v0.3 | Phase 1 完成：Progressive Disclosure 三層架構 |
 | 2026-04-20 | v0.4 | Phase 2 完成：Icon/Legend 分類系統 |
+| 2026-04-20 | v0.5 | Phase 3 完成：<private> 隱私標籤 |
+| 2026-04-20 | v0.6 | Phase 4 进行中：Lifecycle Hooks 介面 |
