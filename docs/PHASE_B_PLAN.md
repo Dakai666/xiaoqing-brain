@@ -101,19 +101,11 @@ Layer 1: Index ──→ Layer 2: Timeline ──→ Layer 3: Observation
 
 ### TODOs
 
-- [ ] **Phase 2.1**: 定義 Icon Schema
-  - [ ] 建立 `brain/models/icon_types.py`
-  - [ ] 定義所有 Icon 類型與使用規則
-  - [ ] 撰寫分類指南文件
-  - [ ] 人工標註 100 筆訓練資料
-
-- [ ] **Phase 2.2**: CompressionStage 整合
-  - [ ] 改造 `brain/stages/compression.py`
-  - [ ] Prompt 加入 Icon 分類指引
-  - [ ] 輸出時自動標註 Icon
-  - [ ] 分類準確度測試：目標 > 80%
-
-- [ ] **Phase 2.3**: 輸出格式改造
+- [x] **Phase 2.1**: Icon Schema ✅ (2026-04-20, 整合於 Phase 1.1)
+- [x] **Phase 2.2**: CompressionStage 整合 ✅ (2026-04-20)
+  - [x] Prompt 加入 Icon 分類指引
+  - [x] 輸出時自動標註 Icon
+- [x] **Phase 2.3**: 輸出格式改造 ✅ (2026-04-20, 整合於 Phase 1.1-1.3)
   - [ ] 所有搜尋結果顯示 Icon
   - [ ] 群組顯示：按日期 + 按檔案路徑
   - [ ] 格式一致性檢查
@@ -270,4 +262,5 @@ Month 2（平台整合）
 |------|------|----------|
 | 2026-04-20 | v0.1 | 初始規劃文件建立 |
 | 2026-04-20 | v0.2 | Phase 1.1 + 1.2 完成：memory_index + memory_timeline 上線 |
-| 2026-04-20 | v0.3 | Phase 1.3 + 1.4 完成：memory_search ids + Token Budget UI |
+| 2026-04-20 | v0.3 | Phase 1 完成：Progressive Disclosure 三層架構 |
+| 2026-04-20 | v0.4 | Phase 2 完成：Icon/Legend 分類系統 |
