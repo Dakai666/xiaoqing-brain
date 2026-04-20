@@ -166,6 +166,68 @@ class LanceDBStorage:
         
         return index_entries
 
+    async def get_timeline(self, anchor_id: str, depth_before: int = 3, depth_after: int = 3) -> dict:
+        """取得記憶時間線上下文，用於 Progressive Disclosure Layer 2"""
+        all_rows = self.db["memories"].search(None, vector_column_name="vector").limit(2000).to_list()
+        
+        all_rows.sort(key=lambda r: r.get("timestamp", ""))
+        
+        anchor_row = None
+        anchor_idx = None
+        for i, r in enumerate(all_rows):
+            if r["id"] == anchor_id:
+                anchor_row = r
+                anchor_idx = i
+                break
+        
+        if anchor_row is None:
+            return {"error": f"找不到 ID 為 {anchor_id} 的記憶"}
+        
+        before_rows = []
+        after_rows = []
+        
+        collected_before = 0
+        for i in range(anchor_idx - 1, max(-1, anchor_idx - depth_before * 3 - 1), -1):
+            if collected_before >= depth_before:
+                break
+            r = all_rows[i]
+            if not r.get("is_superseded", False):
+                before_rows.append({
+                    "id": r["id"],
+                    "title": self._extract_title(r.get("lossless_text", "")),
+                    "timestamp": r.get("timestamp", ""),
+                    "topic": r.get("topic", ""),
+                    "intent_type": r.get("intent_type", "fact"),
+                })
+                collected_before += 1
+        
+        collected_after = 0
+        for i in range(anchor_idx + 1, min(len(all_rows), anchor_idx + depth_after * 3 + 1)):
+            if collected_after >= depth_after:
+                break
+            r = all_rows[i]
+            if not r.get("is_superseded", False):
+                after_rows.append({
+                    "id": r["id"],
+                    "title": self._extract_title(r.get("lossless_text", "")),
+                    "timestamp": r.get("timestamp", ""),
+                    "topic": r.get("topic", ""),
+                    "intent_type": r.get("intent_type", "fact"),
+                })
+                collected_after += 1
+        
+        return {
+            "anchor": {
+                "id": anchor_row["id"],
+                "title": self._extract_title(anchor_row.get("lossless_text", "")),
+                "timestamp": anchor_row.get("timestamp", ""),
+                "topic": anchor_row.get("topic", ""),
+                "intent_type": anchor_row.get("intent_type", "fact"),
+            },
+            "before": before_rows,
+            "after": after_rows,
+        }
+
     def _extract_title(self, text: str, max_len: int = 60) -> str:
         """從文字中提取標題（前 max_len 字元）"""
         lines = text.strip().split("\n")

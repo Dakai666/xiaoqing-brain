@@ -60,6 +60,19 @@ async def list_tools() -> list[Tool]:
             }
         ),
         Tool(
+            name="memory_timeline",
+            description="取得記憶時間上下文（Progressive Disclosure Layer 2）- 以某筆記憶為中心，回傳前後發生了什麼。幫助理解脈絡敘事。",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "anchor_id": {"type": "string", "description": "中心記憶的 ID（從 memory_index 取得）"},
+                    "depth_before": {"type": "integer", "description": "往前取幾筆", "default": 3},
+                    "depth_after": {"type": "integer", "description": "往後取幾筆", "default": 3}
+                },
+                "required": ["anchor_id"]
+            }
+        ),
+        Tool(
             name="memory_search",
             description="搜尋小晴的記憶",
             inputSchema={
@@ -166,6 +179,12 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
         return await _memory_health()
     elif name == "memory_index":
         return await _memory_index(arguments.get("limit", 50), arguments.get("date", ""))
+    elif name == "memory_timeline":
+        return await _memory_timeline(
+            arguments.get("anchor_id", ""),
+            arguments.get("depth_before", 3),
+            arguments.get("depth_after", 3)
+        )
     elif name == "memory_search":
         return await _memory_search(
             arguments["query"],
@@ -246,6 +265,51 @@ async def _memory_index(limit: int, date: str) -> list[TextContent]:
         return [TextContent(type="text", text="\n".join(lines))]
     except Exception as e:
         return [TextContent(type="text", text=f"❌ 取得索引失敗: {str(e)}")]
+
+
+async def _memory_timeline(anchor_id: str, depth_before: int, depth_after: int) -> list[TextContent]:
+    """Progressive Disclosure Layer 2: 取得時間上下文"""
+    try:
+        retriever = HybridRetriever()
+        timeline = await retriever.lancedb.get_timeline(anchor_id, depth_before, depth_after)
+        
+        if "error" in timeline:
+            return [TextContent(type="text", text=f"❌ {timeline['error']}")]
+        
+        anchor = timeline["anchor"]
+        before = timeline["before"]
+        after = timeline["after"]
+        
+        def _format_ts(ts: str) -> str:
+            """安全格式化 timestamp 為 MM/DD HH:MM"""
+            if len(ts) >= 16:
+                return f"{ts[5:7]}/{ts[8:10]} {ts[11:16]}"
+            return ts
+        
+        lines = [
+            "## 小晴記憶時間線（Progressive Disclosure Layer 2）",
+            "",
+            f"**中心**：{anchor['id'][:8]} | {_format_ts(anchor['timestamp'])} | {_get_icon_for_type(anchor.get('intent_type', 'fact'))} {anchor['title'][:50]}",
+            ""
+        ]
+        
+        if before:
+            lines.append("**之前**：")
+            for entry in reversed(before):
+                lines.append(f"  {_format_ts(entry['timestamp'])} | {_get_icon_for_type(entry.get('intent_type', 'fact'))} {entry['title'][:50]}")
+            lines.append("")
+        
+        if after:
+            lines.append("**之後**：")
+            for entry in after:
+                lines.append(f"  {_format_ts(entry['timestamp'])} | {_get_icon_for_type(entry.get('intent_type', 'fact'))} {entry['title'][:50]}")
+            lines.append("")
+        
+        lines.append("*使用 `memory_search` 並指定 `ids` 參數取得感興趣的完整內容*")
+        
+        return [TextContent(type="text", text="\n".join(lines))]
+    except Exception as e:
+        return [TextContent(type="text", text=f"❌ 取得時間線失敗: {str(e)}")]
 
 
 def _get_icon_for_type(intent_type: str) -> str:
