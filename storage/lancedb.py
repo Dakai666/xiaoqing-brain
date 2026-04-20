@@ -242,23 +242,15 @@ class LanceDBStorage:
         other_chars = len(text) - cjk_chars
         return int(cjk_chars * 1.5 + other_chars * 1.0)
 
-    def _row_to_memory(self, row: dict) -> MemoryUnit:
-        return MemoryUnit(
-            id=row["id"],
-            lossless_text=row["lossless_text"],
-            keywords=row["keywords"],
-            timestamp=row["timestamp"],
-            date=row.get("date", row["timestamp"][:10] if row.get("timestamp") else ""),
-            persons=row["persons"],
-            topic=row["topic"],
-            session_id=row["session_id"],
-            intent_type=row.get("intent_type", "fact"),
-            source_reliability=row.get("source_reliability", 1.0),
-            decay_rate=row.get("decay_rate", "normal"),
-            confidence=row.get("confidence", 1.0),
-            last_accessed=row.get("last_accessed"),
-            access_count=row.get("access_count", 0),
-            is_superseded=row.get("is_superseded", False),
-            replaced_by=row.get("replaced_by"),
-            needs_confirmation=row.get("needs_confirmation", False),
-        )
+    async def get_by_ids(self, ids: List[str]) -> List[MemoryUnit]:
+        """根據 ID list 取得特定記憶，用於 Progressive Disclosure Layer 3"""
+        if not ids:
+            return []
+        
+        id_list = "', '".join(ids)
+        results = self.db["memories"].search(None, vector_column_name="vector")\
+            .where(f"id IN ('{id_list}')")\
+            .limit(len(ids))\
+            .to_list()
+        
+        return [self._row_to_memory(r) for r in results]

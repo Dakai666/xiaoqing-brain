@@ -74,16 +74,16 @@ async def list_tools() -> list[Tool]:
         ),
         Tool(
             name="memory_search",
-            description="搜尋小晴的記憶",
+            description="搜尋小晴的記憶。可用 `ids` 參數指定特定 ID 直接取得完整內容（Layer 3），或使用 `query` 進行語意搜尋。",
             inputSchema={
                 "type": "object",
                 "properties": {
                     "query": {"type": "string", "description": "搜尋查詢"},
+                    "ids": {"type": "array", "items": {"type": "string"}, "description": "直接指定記憶 ID 取得完整內容（Layer 3）"},
                     "start_date": {"type": "string", "description": "開始日期 (YYYY-MM-DD)", "default": ""},
                     "end_date": {"type": "string", "description": "結束日期 (YYYY-MM-DD)", "default": ""},
                     "top_k": {"type": "integer", "description": "回傳結果數量", "default": 5}
-                },
-                "required": ["query"]
+                }
             }
         ),
         Tool(
@@ -187,7 +187,8 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
         )
     elif name == "memory_search":
         return await _memory_search(
-            arguments["query"],
+            arguments.get("query", ""),
+            arguments.get("ids"),
             arguments.get("top_k", 5),
             arguments.get("start_date", ""),
             arguments.get("end_date", "")
@@ -312,6 +313,13 @@ async def _memory_timeline(anchor_id: str, depth_before: int, depth_after: int) 
         return [TextContent(type="text", text=f"❌ 取得時間線失敗: {str(e)}")]
 
 
+def _estimate_tokens(text: str) -> int:
+    """Token 估計：中/日/韓 1.5，其他 1.0"""
+    cjk_chars = sum(1 for c in text if '\u4e00' <= c <= '\u9fff' or '\u3040' <= c <= '\u30ff' or '\uac00' <= c <= '\ud7af')
+    other_chars = len(text) - cjk_chars
+    return int(cjk_chars * 1.5 + other_chars * 1.0)
+
+
 def _get_icon_for_type(intent_type: str) -> str:
     """對應 Icon 類型"""
     try:
@@ -321,8 +329,22 @@ def _get_icon_for_type(intent_type: str) -> str:
         return "🔵"
 
 
-async def _memory_search(query: str, top_k: int, start_date: str = "", end_date: str = "") -> list[TextContent]:
+async def _memory_search(query: str, ids: list, top_k: int, start_date: str = "", end_date: str = "") -> list[TextContent]:
+    """Layer 3: 根據指定 IDs 回傳完整內容，或執行語意搜尋"""
     retriever = HybridRetriever()
+    
+    if ids:
+        memories = await retriever.lancedb.get_by_ids(ids)
+        output = []
+        for m in memories:
+            time_distance = m.get_time_distance()
+            icon = _get_icon_for_type(m.intent_type.value if hasattr(m.intent_type, 'value') else m.intent_type)
+            tokens = _estimate_tokens(m.lossless_text)
+            output.append(TextContent(
+                type="text",
+                text=f"{icon} **[{m.topic}]**\n{m.lossless_text}\n\n💡 時間: {time_distance} | ~{tokens} tokens\n關鍵詞: {', '.join(m.keywords)}"
+            ))
+        return output if output else [TextContent(type="text", text="找不到指定的記憶")]
     
     results = []
     
@@ -346,9 +368,11 @@ async def _memory_search(query: str, top_k: int, start_date: str = "", end_date:
     output = []
     for m in results:
         time_distance = m.get_time_distance()
+        icon = _get_icon_for_type(m.intent_type.value if hasattr(m.intent_type, 'value') else m.intent_type)
+        tokens = _estimate_tokens(m.lossless_text)
         output.append(TextContent(
             type="text",
-            text=f"[{m.topic}] {m.lossless_text}\n關鍵詞: {', '.join(m.keywords)}\n時間: {time_distance} ({m.timestamp})"
+            text=f"{icon} **[{m.topic}]**\n{m.lossless_text}\n\n💡 時間: {time_distance} | ~{tokens} tokens\n關鍵詞: {', '.join(m.keywords)}"
         ))
     
     return output if output else [TextContent(type="text", text="找不到相關記憶")]
