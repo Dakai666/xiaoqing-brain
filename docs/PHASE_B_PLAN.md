@@ -40,18 +40,18 @@ Layer 1: Index ──→ Layer 2: Timeline ──→ Layer 3: Observation
 
 ### TODOs
 
-- [ ] **Phase 1.1**: 新增 `memory_index` tool
-  - [ ] 定義輸出格式：`| #ID | Time | Icon | Title | ~Tokens |`
-  - [ ] 實作 `lancedb.get_index()` 方法
-  - [ ] 加入 token estimate（基於文字長度採樣）
-  - [ ] 單元測試：格式正確性
-  - [ ] 集成測試：與現有搜尋效率對比
+- [x] **Phase 1.1**: 新增 `memory_index` tool ✅ (2026-04-20)
+  - [x] 定義輸出格式：`| #ID | Time | Icon | Title | ~Tokens |`
+  - [x] 實作 `lancedb.get_index()` 方法
+  - [x] 加入 token estimate（基於文字長度採樣）
+  - [x] 單元測試：格式正確性
+  - [x] 集成測試：與現有搜尋效率對比
 
-- [ ] **Phase 1.2**: 新增 `memory_timeline` tool
-  - [ ] 參數：`anchor_id`, `depth_before`, `depth_after`
-  - [ ] 實作時間上下文查詢
-  - [ ] 單元測試：時間線完整性
-  - [ ] 集成測試：敘事脈絡驗證
+- [x] **Phase 1.2**: 新增 `memory_timeline` tool ✅ (2026-04-20)
+  - [x] 參數：`anchor_id`, `depth_before`, `depth_after`
+  - [x] 實作時間上下文查詢
+  - [x] 單元測試：時間線完整性
+  - [x] 集成測試：敘事脈絡驗證
 
 - [ ] **Phase 1.3**: 改造 `memory_search` tool
   - [ ] 新增 `ids` 參數（list of IDs）
@@ -269,3 +269,4 @@ Month 2（平台整合）
 | 日期 | 版本 | 變更內容 |
 |------|------|----------|
 | 2026-04-20 | v0.1 | 初始規劃文件建立 |
+| 2026-04-20 | v0.2 | Phase 1.1 + 1.2 完成：memory_index + memory_timeline 上線 |
