@@ -79,14 +79,26 @@ brain/
 { "name": "memory_health", "inputSchema": {} }
 ```
 
-### memory_search
-搜尋相關記憶
+### memory_index 🌟 NEW
+Progressive Disclosure Layer 1 - 取得記憶索引（只回傳 ID、標題、時間、token 估計）
 ```json
-{ "name": "memory_search", "inputSchema": { "query": "string", "top_k": 5 } }
+{ "name": "memory_index", "inputSchema": { "limit": 50, "date": "YYYY-MM-DD" } }
+```
+
+### memory_timeline 🌟 NEW
+Progressive Disclosure Layer 2 - 以某筆記憶為中心，回傳前後發生了什麼
+```json
+{ "name": "memory_timeline", "inputSchema": { "anchor_id": "string", "depth_before": 3, "depth_after": 3 } }
+```
+
+### memory_search
+搜尋相關記憶（支援 Layer 3 指定 ID 取得完整內容）
+```json
+{ "name": "memory_search", "inputSchema": { "query": "string", "ids": ["string"], "top_k": 5 } }
 ```
 
 ### memory_add
-新增對話到記憶
+新增對話到記憶（支援 `<private>` 隱私標籤）
 ```json
 { "name": "memory_add", "inputSchema": { "session_id": "string", "content": "string" } }
 ```
@@ -108,6 +120,29 @@ brain/
 ```json
 { "name": "memory_get_context", "inputSchema": { "context": "string", "top_k": 3 } }
 ```
+
+---
+
+## Phase B: 智慧記憶系統升級 (2026-04-20) 🌟
+
+### Progressive Disclosure（漸進式披露）
+Token 效率優化，~10x token 節省
+
+```
+Layer 1: Index ──→ Layer 2: Timeline ──→ Layer 3: Observation
+(~50-100 tokens)   (~200 tokens)        (~500-1000 tokens)
+```
+
+### Icon/Legend 分類系統
+```markdown
+🔵 fact      - 用戶明確陳述的事實
+💫 impression - 推斷、印象、猜測
+🎯 preference - 偏好、喜歡、厭惡
+🌱 habit     - 習慣、日常行為
+```
+
+### <private> 隱私標籤
+敏感資料保護，`<private>敏感內容</private>` 自動脫敏
 
 ## MCP Tools（記帳系統）🌟
 
@@ -349,6 +384,12 @@ print(svc.get_summary())
   - [x] 分類自動偵測（food/transport/shopping/health...）
   - [x] 月摘要文字報告（含分類長條圖）
 
+- [x] **Phase B: 智慧記憶系統升級** ✅ 2026-04-20
+  - [x] Progressive Disclosure 三層架構（memory_index + memory_timeline + memory_search ids）
+  - [x] Icon/Legend 分類系統（🔵💫🎯🌱）
+  - [x] <private> 隱私標籤（自動脫敏 + 搜尋過濾）
+  - [ ] Lifecycle Hooks 介面（進行中）
+
 ---
 
-*小晴大腦 v2.0 - 記憶 + 記帳雙系統運作中！2026-04-09*
+*小晴大腦 v0.3 - 記憶 + 記帳 + 智慧檢索三系統運作中！2026-04-20*

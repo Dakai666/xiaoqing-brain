@@ -131,18 +131,18 @@ Agent: 小晴幫我記住，我密碼是 123456
 小晴: content = "用戶密碼 <private>123456</private>"
 ```
 
-### TODOs
+### TODOs 
 
-- [ ] **Phase 3.1**: 解析器實作
-  - [ ] 在 `memory_add` 中新增 `<private>` 標籤解析
-  - [ ] 格式：`<private>敏感內容</private>`
-  - [ ] 解析後將敏感內容 SHA-256 雜湊儲存
-  - [ ] 單元測試：標籤正確解析
+- [x] **Phase 3.1**: 解析器實作 ✅ (2026-04-20)
+  - [x] 在 `memory_add` 中新增 `<private>` 標籤解析
+  - [x] 格式：`<private>敏感內容</private>`
+  - [x] 解析後將敏感內容 SHA-256 雜湊儲存
+  - [x] 單元測試：標籤正確解析
 
-- [ ] **Phase 3.2**: 檢索排除
-  - [ ] 搜尋結果自動過濾 private 內容
-  - [ ] 新增 `include_private` 參數（預設 False）
-  - [ ] 端到端測試：private 內容不出現在輸出
+- [x] **Phase 3.2**: 檢索排除 ✅ (2026-04-20)
+  - [x] 搜尋結果自動過濾 private 內容
+  - [x] 新增 `include_private` 參數（預設 False）
+  - [x] 端到端測試：private 內容不出現在輸出
 
 - [ ] **Phase 3.3**: 白名單機制（未來規劃）
   - [ ] 允許特定 Icon 或 Topic 標記為 non-private
@@ -262,7 +262,4 @@ Month 2（平台整合）
 |------|------|----------|
 | 2026-04-20 | v0.1 | 初始規劃文件建立 |
 | 2026-04-20 | v0.2 | Phase 1.1 + 1.2 完成：memory_index + memory_timeline 上線 |
-| 2026-04-20 | v0.3 | Phase 1 完成：Progressive Disclosure 三層架構 |
-| 2026-04-20 | v0.4 | Phase 2 完成：Icon/Legend 分類系統 |
-| 2026-04-20 | v0.5 | Phase 3 完成：<private> 隱私標籤 |
-| 2026-04-20 | v0.6 | Phase 4 进行中：Lifecycle Hooks 介面 |
+| 2026-04-20 | v0.3 | Feature 1-3 完成：Progressive Disclosure + Icon 分類 + 隱私標籤 |
