@@ -382,13 +382,19 @@ async def _memory_add(session_id: str, content: str) -> list[TextContent]:
     compression = CompressionStage(model="MiniMax-M2.7")
     retriever = HybridRetriever()
     
-    memories = await compression.process(content)
+    clean_content, is_private, private_hash = MemoryUnit.parse_private_tags(content)
+    
+    memories = await compression.process(clean_content)
     
     for m in memories:
         m.session_id = session_id
+        if is_private:
+            m.is_private = True
+            m.private_hash = private_hash
         await retriever.add_memory(m)
     
-    return [TextContent(type="text", text=f"已儲存 {len(memories)} 個記憶單元")]
+    private_note = "（含私人資料已脫敏）" if is_private else ""
+    return [TextContent(type="text", text=f"已儲存 {len(memories)} 個記憶單元 {private_note}")]
 
 
 async def _memory_get_by_topic(topic: str) -> list[TextContent]:

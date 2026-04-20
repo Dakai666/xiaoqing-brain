@@ -54,6 +54,8 @@ class LanceDBStorage:
             pa.field("is_superseded", pa.bool_()),
             pa.field("replaced_by", pa.string()),
             pa.field("needs_confirmation", pa.bool_()),
+            pa.field("is_private", pa.bool_()),
+            pa.field("private_hash", pa.string()),
         ])
 
     async def _embed(self, text: str) -> List[float]:
@@ -91,44 +93,57 @@ class LanceDBStorage:
             "is_superseded": memory.is_superseded,
             "replaced_by": memory.replaced_by,
             "needs_confirmation": memory.needs_confirmation,
+            "is_private": memory.is_private,
+            "private_hash": memory.private_hash or "",
         }
         self.db["memories"].add([data])
         return memory.id
 
+    def _row_to_memory(self, row: dict) -> MemoryUnit:
+        """將資料庫 row 轉換為 MemoryUnit"""
+        return MemoryUnit(
+            id=row["id"],
+            lossless_text=row["lossless_text"],
+            keywords=row["keywords"],
+            timestamp=row["timestamp"],
+            date=row.get("date", row["timestamp"][:10] if row.get("timestamp") else ""),
+            persons=row["persons"],
+            topic=row["topic"],
+            session_id=row["session_id"],
+            intent_type=row.get("intent_type", "fact"),
+            source_reliability=row.get("source_reliability", 1.0),
+            decay_rate=row.get("decay_rate", "normal"),
+            confidence=row.get("confidence", 1.0),
+            last_accessed=row.get("last_accessed"),
+            access_count=row.get("access_count", 0),
+            is_superseded=row.get("is_superseded", False),
+            replaced_by=row.get("replaced_by"),
+            needs_confirmation=row.get("needs_confirmation", False),
+            is_private=row.get("is_private", False),
+            private_hash=row.get("private_hash") or None,
+        )
+
     async def search(self, query: str, top_k: int = 5) -> List[MemoryUnit]:
         query_vector = await self._embed(query)
-        results = self.db["memories"].search(query_vector, vector_column_name="vector").limit(top_k).to_list()
+        results = self.db["memories"].search(query_vector, vector_column_name="vector").limit(top_k * 3).to_list()
         
         memories = []
         for r in results:
-            memories.append(MemoryUnit(
-                id=r["id"],
-                lossless_text=r["lossless_text"],
-                keywords=r["keywords"],
-                timestamp=r["timestamp"],
-                date=r.get("date", r["timestamp"][:10] if r.get("timestamp") else ""),
-                persons=r["persons"],
-                topic=r["topic"],
-                session_id=r["session_id"],
-                intent_type=r.get("intent_type", "fact"),
-                source_reliability=r.get("source_reliability", 1.0),
-                decay_rate=r.get("decay_rate", "normal"),
-                confidence=r.get("confidence", 1.0),
-                last_accessed=r.get("last_accessed"),
-                access_count=r.get("access_count", 0),
-                is_superseded=r.get("is_superseded", False),
-                replaced_by=r.get("replaced_by"),
-                needs_confirmation=r.get("needs_confirmation", False),
-            ))
+            if r.get("is_private", False):
+                continue
+            memories.append(self._row_to_memory(r))
+            if len(memories) >= top_k:
+                break
+        
         return memories
 
     async def get_by_topic(self, topic: str) -> List[MemoryUnit]:
         results = self.db["memories"].search(None, vector_column_name="vector").where(f"topic = '{topic}'").limit(100).to_list()
-        return [self._row_to_memory(r) for r in results]
+        return [self._row_to_memory(r) for r in results if not r.get("is_private", False)]
 
     async def get_by_person(self, person: str) -> List[MemoryUnit]:
         results = self.db["memories"].search(None, vector_column_name="vector").limit(100).to_list()
-        filtered = [r for r in results if person in r.get("persons", [])]
+        filtered = [r for r in results if person in r.get("persons", []) and not r.get("is_private", False)]
         return [self._row_to_memory(r) for r in filtered]
 
     async def get_by_date_range(self, start_date: str, end_date: Optional[str] = None) -> List[MemoryUnit]:
@@ -136,7 +151,7 @@ class LanceDBStorage:
             results = self.db["memories"].search(None, vector_column_name="vector").where(f"date >= '{start_date}' AND date <= '{end_date}'").limit(100).to_list()
         else:
             results = self.db["memories"].search(None, vector_column_name="vector").where(f"date = '{start_date}'").limit(100).to_list()
-        return [self._row_to_memory(r) for r in results]
+        return [self._row_to_memory(r) for r in results if not r.get("is_private", False)]
 
     async def get_index(self, limit: int = 50, date: str = None) -> List[dict]:
         """取得記憶索引（不含 vector），用於 Progressive Disclosure Layer 1"""
@@ -149,9 +164,9 @@ class LanceDBStorage:
         
         index_entries = []
         for r in results:
-            if r.get("is_superseded", False):
+            if r.get("is_superseded", False) or r.get("is_private", False):
                 continue
-                
+
             lossless_text = r.get("lossless_text", "")
             index_entries.append({
                 "id": r["id"],
@@ -191,7 +206,7 @@ class LanceDBStorage:
             if collected_before >= depth_before:
                 break
             r = all_rows[i]
-            if not r.get("is_superseded", False):
+            if not r.get("is_superseded", False) and not r.get("is_private", False):
                 before_rows.append({
                     "id": r["id"],
                     "title": self._extract_title(r.get("lossless_text", "")),
@@ -206,7 +221,7 @@ class LanceDBStorage:
             if collected_after >= depth_after:
                 break
             r = all_rows[i]
-            if not r.get("is_superseded", False):
+            if not r.get("is_superseded", False) and not r.get("is_private", False):
                 after_rows.append({
                     "id": r["id"],
                     "title": self._extract_title(r.get("lossless_text", "")),
@@ -253,4 +268,4 @@ class LanceDBStorage:
             .limit(len(ids))\
             .to_list()
         
-        return [self._row_to_memory(r) for r in results]
+        return [self._row_to_memory(r) for r in results if not r.get("is_private", False)]

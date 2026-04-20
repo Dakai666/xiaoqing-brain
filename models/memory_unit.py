@@ -3,6 +3,8 @@ from typing import List, Optional
 from datetime import datetime, timedelta
 from enum import Enum
 import uuid
+import re
+import hashlib
 
 
 class IntentType(str, Enum):
@@ -67,6 +69,24 @@ class MemoryUnit(BaseModel):
     is_superseded: bool = False
     replaced_by: Optional[str] = None
     needs_confirmation: bool = False
+    
+    is_private: bool = False
+    private_hash: Optional[str] = None
+
+    @staticmethod
+    def parse_private_tags(text: str) -> tuple[str, bool, Optional[str]]:
+        """解析 <private>...</private> 標籤，回傳 (淨化文字, 是否私有, 私有多內容雜湊)"""
+        pattern = r'<private>(.*?)</private>'
+        matches = re.findall(pattern, text, re.DOTALL)
+        
+        if not matches:
+            return text, False, None
+        
+        private_content = '|'.join(matches)
+        content_hash = hashlib.sha256(private_content.encode()).hexdigest()[:16]
+        clean_text = re.sub(pattern, '[私人資料]', text)
+        
+        return clean_text, True, content_hash
     
     @model_validator(mode="before")
     @classmethod
