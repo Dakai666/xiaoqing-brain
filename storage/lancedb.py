@@ -33,6 +33,40 @@ class LanceDBStorage:
     def _ensure_table(self):
         if "memories" not in self.db.table_names():
             self.db.create_table("memories", schema=self._schema())
+        else:
+            self._migrate_schema_if_needed()
+
+    def _migrate_schema_if_needed(self):
+        """檢查並遷移 schema（如果缺少新欄位）"""
+        table = self.db.open_table("memories")
+        schema_names = {f.name for f in table.schema}
+        required_fields = {"is_private", "private_hash"}
+        missing = required_fields - schema_names
+        
+        if missing:
+            print(f"[LanceDB] Migration needed: adding {missing}")
+            try:
+                import pyarrow as pa
+                results = table.search(None).limit(10000).to_list()
+                new_records = []
+                for r in results:
+                    r["is_private"] = r.get("is_private", False)
+                    r["private_hash"] = r.get("private_hash") or ""
+                    new_records.append(r)
+                
+                self.db.drop_table("memories")
+                import time
+                time.sleep(0.1)
+                self.db.create_table("memories", schema=self._schema())
+                if new_records:
+                    self.db["memories"].add(new_records)
+                print(f"[LanceDB] Migration complete: {len(new_records)} records")
+            except Exception as e:
+                print(f"[LanceDB] Migration failed: {e}")
+                try:
+                    self.db.create_table("memories", schema=self._schema())
+                except Exception:
+                    pass
 
     def _schema(self):
         return pa.schema([

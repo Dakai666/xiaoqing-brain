@@ -216,12 +216,18 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
 async def _memory_health() -> list[TextContent]:
     try:
         sqlite = SQLiteStorage()
-        total = len(sqlite.search('', 1000))
+        lancedb = LanceDBStorage()
+        
+        sqlite_total = len(sqlite.search('', 1000))
+        lancedb_total = len(lancedb.db["memories"].search(None).limit(10000).to_list())
         today_memories = sqlite.get_today_memories()
+        
+        sync_status = "✅" if sqlite_total == lancedb_total else f"⚠️ 差{lancedb_total - sqlite_total}筆"
         
         status_parts = [
             f"✅ 記憶系統正常運作",
-            f"總記憶: {total} 筆",
+            f"SQLite: {sqlite_total} 筆",
+            f"LanceDB: {lancedb_total} 筆 ({sync_status})",
             f"今日新增: {len(today_memories)} 筆",
         ]
         
