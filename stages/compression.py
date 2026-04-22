@@ -95,6 +95,11 @@ class CompressionStage:
                             unit_data["decay_rate"] = "normal"
                         if "intent_type" not in unit_data:
                             unit_data["intent_type"] = "fact"
+                        else:
+                            import re
+                            it = unit_data["intent_type"]
+                            clean = re.sub(r'[\U0001F300-\U0001F9FF]', '', it).strip()
+                            unit_data["intent_type"] = clean
                         memories.append(MemoryUnit(**unit_data))
             return memories
         except (json.JSONDecodeError, Exception) as e:
