@@ -14,6 +14,7 @@ from brain.stages.compression import CompressionStage
 from brain.stages.consolidation import ConsolidationScheduler
 from brain.stages.synthesis import SynthesisStage
 from brain.storage.sqlite import SQLiteStorage
+from brain.storage.lancedb import LanceDBStorage
 from brain.storage.markdown import MarkdownBackup
 from brain.retrieval.hybrid import HybridRetriever
 from brain.retrieval.intent import IntentRetriever
