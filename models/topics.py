@@ -9,6 +9,7 @@ TOPICS = {
     "decision",      # 重要決定
     "learning",      # 學習心得
     "routine",       # 日常作息
+    "diary",         # 日記（session 摘要）
     "general",       # 一般（預設）
 }
 

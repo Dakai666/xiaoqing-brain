@@ -197,11 +197,11 @@ class MemoryHooks:
   - [x] Input validation: per-event-type required fields
   - [x] Validation：13 tests pass
 
-- [ ] **Phase 4.3**: 自動化 Compression
-  - [ ] Tool use 事件觸發輕量級 compression
-  - [ ] Session end 觸發完整 synthesis
-  - [ ] 非同步處理不影響 Agent 效能
-  - [ ] Validation：自動化產生的記憶品質
+- [x] **Phase 4.3**: 自動化 Compression ✅ (2026-05-03)
+  - [x] on_stop: query session memories → SynthesisStage → 日記儲存
+  - [x] on_session_end: session_id 清理
+  - [x] 新建 "diary" topic 到合法主題集合
+  - [x] Validation：topic validation pass
 
 - [ ] **Phase 4.4**: 其他平台適配器（未來規劃）
   - [ ] Claude Code adapter

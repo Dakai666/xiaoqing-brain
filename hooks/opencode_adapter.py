@@ -92,12 +92,40 @@ class OpenCodeHook(MemoryHook):
             print(f"[OpenCodeHook] Error recording tool use: {e}", flush=True)
 
     async def on_stop(self, event: StopEvent) -> None:
-        # TODO: 生成 session 摘要並儲存
-        pass
+        """生成 session 摘要日記，儲存為 diary 記憶"""
+        sid = event.session_id
+        if not sid:
+            return
+
+        try:
+            from ..stages.synthesis import SynthesisStage
+            from ..storage.sqlite import SQLiteStorage
+
+            sqlite = SQLiteStorage()
+            memories = sqlite.get_by_session(sid)
+
+            if len(memories) < 2:
+                print(f"[OpenCodeHook] Session {sid[:8]} has {len(memories)} memories, skip summary", flush=True)
+                return
+
+            synthesis = SynthesisStage(model=self._model)
+            synthesized = await synthesis.process(memories)
+
+            retriever = self._get_retriever()
+            for m in synthesized:
+                m.session_id = sid
+                m.topic = "diary"
+                await retriever.add_memory(m)
+
+            print(f"[OpenCodeHook] Session {sid[:8]} summary: {len(memories)} memories → {len(synthesized)} diary entries", flush=True)
+        except Exception as e:
+            print(f"[OpenCodeHook] Error generating session summary: {e}", flush=True)
 
     async def on_session_end(self, event: SessionEndEvent) -> None:
-        print(f"[OpenCodeHook] Session ended: {self._session_id}", flush=True)
+        # TODO: 觸發 consolidation scheduler 立即處理此 session
+        sid = self._session_id
         self._session_id = None
+        print(f"[OpenCodeHook] Session ended: {sid}", flush=True)
 
     @staticmethod
     def _summarize_args(args: dict) -> str:
