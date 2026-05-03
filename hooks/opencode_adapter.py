@@ -13,8 +13,7 @@ class OpenCodeHook(MemoryHook):
     """
 
     _MEANINGFUL_TOOLS = {
-        "edit", "write", "bash", "glob", "grep", "read",
-        "task", "skill", "webfetch",
+        "edit", "write", "bash", "task", "skill",
     }
 
     def __init__(self, model: str = "MiniMax-M2.7"):
