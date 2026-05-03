@@ -183,17 +183,19 @@ class MemoryHooks:
 
 ### TODOs
 
-- [ ] **Phase 4.1**: Hook 介面定義
-  - [ ] 建立 `brain/hooks/base.py` 定義標準介面
-  - [ ] 建立 `brain/hooks/events.py` 定義 event payload
-  - [ ] 撰寫 Hook 開發文件
-  - [ ] Validation：介面正確接收事件
+- [x] **Phase 4.1**: Hook 介面定義 ✅ (2026-05-03)
+  - [x] 建立 `brain/hooks/base.py` 定義標準介面
+  - [x] 建立 `brain/hooks/events.py` 定義 event payload
+  - [x] 建立 `brain/hooks/opencode_adapter.py` (初版)
+  - [x] Validation：dispatch 機制正確轉換 camel→snake
 
-- [ ] **Phase 4.2**: OpenCode 適配器
-  - [ ] 建立 `brain/hooks/opencode_adapter.py`
-  - [ ] 實作 OpenCode 的 Hook 介面
-  - [ ] 自動捕捉 tool_calls、user_messages
-  - [ ] Validation：Hook 事件正確觸發並寫入記憶
+- [x] **Phase 4.2**: OpenCode 整合 ✅ (2026-05-03)
+  - [x] OpenCodeHook 直接使用 CompressionStage + HybridRetriever（無 HTTP）
+  - [x] 新增 `lifecycle_event` MCP tool
+  - [x] 集成 HookRegistry 到 mcp_server.py
+  - [x] ErrorEvent 收集回傳給 caller
+  - [x] Input validation: per-event-type required fields
+  - [x] Validation：13 tests pass
 
 - [ ] **Phase 4.3**: 自動化 Compression
   - [ ] Tool use 事件觸發輕量級 compression

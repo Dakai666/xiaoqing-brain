@@ -5,6 +5,7 @@ import os
 sys.path.insert(0, '/home/user/.kimaki/projects/xiaoqing')
 
 import asyncio
+from datetime import datetime, timezone
 from mcp.server import Server
 from mcp.types import Tool, TextContent, Prompt
 from mcp.server.stdio import stdio_server
@@ -20,10 +21,17 @@ from brain.retrieval.hybrid import HybridRetriever
 from brain.retrieval.intent import IntentRetriever
 from brain.utils.llm_backend import MiniMaxBackend, set_llm_backend
 from brain.accounting import AccountingService
+from brain.hooks.base import HookRegistry
+from brain.hooks.opencode_adapter import OpenCodeHook
+from brain.hooks.events import (
+    SessionStartEvent, UserMessageEvent, ToolUseEvent,
+    StopEvent, SessionEndEvent,
+)
 
 
 server = Server("xiaoqing-memory")
 _accounting_service = None
+_hook_registry: HookRegistry = None
 
 
 def get_accounting_service():
@@ -171,6 +179,29 @@ async def list_tools() -> list[Tool]:
                 "properties": {}
             }
         ),
+        Tool(
+            name="lifecycle_event",
+            description="觸發記憶生命週期事件（被動記憶捕捉）。當 session 狀態改變時呼叫此 tool 來記錄。",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "event_type": {
+                        "type": "string",
+                        "description": "事件類型",
+                        "enum": ["session_start", "user_message", "tool_use", "stop", "session_end"]
+                    },
+                    "session_id": {"type": "string", "description": "Session ID"},
+                    "agent_name": {"type": "string", "description": "Agent 名稱（session_start 時使用）"},
+                    "message": {"type": "string", "description": "用戶訊息內容（user_message 時使用）"},
+                    "tool_name": {"type": "string", "description": "Tool 名稱（tool_use 時使用）"},
+                    "tool_args": {"type": "object", "description": "Tool 參數（tool_use 時使用）"},
+                    "tool_result": {"type": "string", "description": "Tool 結果（tool_use 時使用）"},
+                    "reason": {"type": "string", "description": "結束原因（stop 時使用）"},
+                    "summary": {"type": "string", "description": "Session 摘要（session_end 時使用）"},
+                },
+                "required": ["event_type", "session_id"]
+            }
+        ),
     ]
 
 
@@ -210,6 +241,8 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
         return await _accounting_today()
     elif name == "accounting_all":
         return await _accounting_all()
+    elif name == "lifecycle_event":
+        return await _lifecycle_event(arguments)
     else:
         raise ValueError(f"Unknown tool: {name}")
 
@@ -487,6 +520,89 @@ async def _accounting_all() -> list[TextContent]:
     return [TextContent(type="text", text=result)]
 
 
+async def _lifecycle_event(arguments: dict) -> list[TextContent]:
+    """處理 lifecycle event，分發到已註冊的 hooks"""
+    global _hook_registry
+
+    event_type = arguments.get("event_type", "")
+    session_id = arguments.get("session_id", "")
+    timestamp = datetime.now(timezone.utc).isoformat()
+
+    _REQUIRED_FIELDS = {
+        "session_start": [],
+        "user_message": ["message"],
+        "tool_use": ["tool_name"],
+        "stop": [],
+        "session_end": [],
+    }
+
+    if event_type in _REQUIRED_FIELDS:
+        for field in _REQUIRED_FIELDS[event_type]:
+            if not arguments.get(field):
+                return [TextContent(
+                    type="text",
+                    text=f"❌ {event_type} 事件缺少必要欄位: {field}"
+                )]
+
+    if not _hook_registry:
+        return [TextContent(type="text", text="⚠️ Hook registry 尚未初始化")]
+
+    try:
+        if event_type == "session_start":
+            event = SessionStartEvent(
+                event_type=event_type,
+                timestamp=timestamp,
+                session_id=session_id,
+                agent_name=arguments.get("agent_name"),
+            )
+        elif event_type == "user_message":
+            event = UserMessageEvent(
+                event_type=event_type,
+                timestamp=timestamp,
+                session_id=session_id,
+                message=arguments.get("message", ""),
+            )
+        elif event_type == "tool_use":
+            event = ToolUseEvent(
+                event_type=event_type,
+                timestamp=timestamp,
+                session_id=session_id,
+                tool_name=arguments.get("tool_name", ""),
+                args=arguments.get("tool_args", {}),
+                result=arguments.get("tool_result", ""),
+            )
+        elif event_type == "stop":
+            event = StopEvent(
+                event_type=event_type,
+                timestamp=timestamp,
+                session_id=session_id,
+                reason=arguments.get("reason"),
+            )
+        elif event_type == "session_end":
+            event = SessionEndEvent(
+                event_type=event_type,
+                timestamp=timestamp,
+                session_id=session_id,
+                summary=arguments.get("summary"),
+            )
+        else:
+            return [TextContent(type="text", text=f"❌ 未知事件類型: {event_type}")]
+
+        errors = await _hook_registry.dispatch(event)
+        if errors:
+            error_msgs = "\n".join(
+                f"  - [{e.hook_name}] {e.error}" for e in errors
+            )
+            return [TextContent(
+                type="text",
+                text=f"⚠️ {event_type} 事件已分發，但 {len(errors)} 個 hook 失敗:\n{error_msgs}"
+            )]
+        return [TextContent(type="text", text=f"✅ {event_type} 事件已分發")]
+
+    except Exception as e:
+        return [TextContent(type="text", text=f"❌ Hook 執行錯誤: {str(e)}")]
+
+
 def _write_health_status(status: str, error: str = None):
     status_file = '/home/user/.kimaki/projects/xiaoqing/data/brain_mcp_status.json'
     import json
@@ -504,6 +620,8 @@ def _write_health_status(status: str, error: str = None):
 
 
 async def main():
+    global _hook_registry
+
     try:
         with open('/home/user/.kimaki/projects/xiaoqing/.env', 'r') as f:
             for line in f:
@@ -512,6 +630,11 @@ async def main():
                     break
         
         set_llm_backend(MiniMaxBackend())
+        
+        # Initialize hook system
+        _hook_registry = HookRegistry()
+        _hook_registry.register(OpenCodeHook())
+        print(f"[Hook] Registered hooks: {len(_hook_registry._hooks)}", flush=True, file=sys.stderr)
         
         sqlite = SQLiteStorage()
         synthesis = SynthesisStage(model="MiniMax-M2.7")
