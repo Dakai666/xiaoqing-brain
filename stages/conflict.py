@@ -28,10 +28,7 @@ class ConflictResolver:
         
         similarity = self._content_similarity(new.lossless_text, old.lossless_text)
         
-        if similarity > 0.5:
-            return False
-        
-        return True
+        return similarity > 0.5
     
     def _content_similarity(self, text1: str, text2: str) -> float:
         words1 = set(text1.lower().split())
