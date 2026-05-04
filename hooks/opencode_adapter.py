@@ -67,7 +67,7 @@ class OpenCodeHook(MemoryHook):
 
         tool_lower = event.tool_name.lower()
 
-        if not any(tool_lower.startswith(t) for t in self._MEANINGFUL_TOOLS):
+        if tool_lower not in self._MEANINGFUL_TOOLS:
             return
 
         try:

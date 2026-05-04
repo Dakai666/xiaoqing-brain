@@ -20,7 +20,7 @@ class LanceDBStorage:
         self.embed_dim = embed_dim
         
         api_key = os.getenv("MINIMAX_API_KEY", "")
-        if api_key and embed_model is None and False:
+        if api_key and embed_model is None:
             self.embed_model = EMBED_MODEL_MINIMAX
             self.use_minimax = True
         else:
