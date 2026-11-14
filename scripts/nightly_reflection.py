@@ -99,6 +99,74 @@ def check_ollama() -> None:
         FLAGS.append("OLLAMA-OFFLINE")
 
 
+def check_gpu_headroom() -> int:
+    """回傳可用的 VRAM（MiB）。0 = 查不到或沒有獨顯。"""
+    try:
+        import subprocess
+
+        out = subprocess.run(
+            ["nvidia-smi", "--query-gpu=memory.used,memory.total", "--format=csv,noheader,nounits"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        if out.returncode != 0:
+            return 0
+        used, total = (int(x) for x in out.stdout.strip().splitlines()[0].split(","))
+        return total - used
+    except Exception:
+        return 0
+
+
+def resync_vectors() -> None:
+    """把缺向量的記憶補回 LanceDB。
+
+    需要 embedding 模型載入約 5GB VRAM，所以先看 VRAM 餘量：
+    不夠就跳過，留到下次（避免跟 DK 的 GPU 批次搶顯存）。
+    """
+    headroom = check_gpu_headroom()
+    if headroom and headroom < 6000:
+        add(f"VRAM 餘量只有 {headroom} MiB，不足 6000 MiB，本輪不補向量（留到 GPU 空檔時）。")
+        FLAGS.append("VECTOR-DRIFT")
+        return
+    try:
+        import asyncio
+
+        from brain.storage.sqlite import SQLiteStorage
+        from brain.storage.lancedb import LanceDBStorage
+
+        sqlite = SQLiteStorage()
+        lancedb = LanceDBStorage()
+        sqlite_ids = {m.id for m in sqlite.get_all_memories(limit=100000)}
+        lancedb_ids = {
+            r["id"]
+            for r in lancedb.db["memories"].search(None, vector_column_name="vector").limit(100000).to_list()
+        }
+        missing = [m for m in sqlite.get_all_memories(limit=100000) if m.id not in lancedb_ids]
+        if not missing:
+            add("向量庫與 SQLite 已同步，無需補寫。")
+            return
+        add(f"開始補寫 {len(missing)} 筆缺向量的記憶……")
+
+        async def _run():
+            ok = 0
+            for m in missing:
+                try:
+                    await lancedb.add(m)
+                    ok += 1
+                except Exception as e:
+                    add(f"  補寫失敗 {m.id[:8]}: {e}")
+            return ok
+
+        ok = asyncio.run(_run())
+        add(f"補寫完成：成功 {ok} / {len(missing)} 筆")
+        if ok < len(missing):
+            FLAGS.append("VECTOR-DRIFT")
+    except Exception as e:
+        add(f"補寫向量時發生錯誤：{e}")
+        FLAGS.append("VECTOR-DRIFT")
+
+
 def check_disk() -> None:
     try:
         usage = shutil.disk_usage("C:\\")
@@ -115,6 +183,7 @@ def main() -> int:
     check_vector_drift()
     check_ollama()
     check_disk()
+    resync_vectors()
 
     try:
         os.makedirs(os.path.dirname(REPORT_PATH), exist_ok=True)
