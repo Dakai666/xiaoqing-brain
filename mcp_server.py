@@ -323,12 +323,13 @@ async def _memory_health() -> list[TextContent]:
 
         # 只比對「有效記憶」（未被取代）；被 superseded 的舊記憶留在兩邊是設計如此。
         sqlite_active = len(sqlite.get_active_memories(limit=100000))
+        sqlite_all = len(sqlite.get_all_memories(limit=100000))
         lancedb_rows = (
             lancedb.db["memories"].search(None).limit(100000).to_list()
         )
         lancedb_active = len([r for r in lancedb_rows if not r.get("is_superseded", False)])
         lancedb_superseded = len(lancedb_rows) - lancedb_active
-        sqlite_superseded = len(sqlite.search('', 10000)) - sqlite_active
+        sqlite_superseded = sqlite_all - sqlite_active
         today_memories = sqlite.get_today_memories()
 
         if sqlite_active == lancedb_active:
