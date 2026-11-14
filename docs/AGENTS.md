@@ -224,7 +224,7 @@ MiniMax 模型，否則會收到 HTTP 400 `unknown model 'qwen3.5:9b'`。
 
 | 排程 | 規則 | 條件閘 | 腳本 |
 |---|---|---|---|
-| 智慧巡檢 Smart Pulse | `every: 30 minutes` | `changes: true`（輸出不變就不喚醒，0 Token） | `brain/scripts/pulse_check.cmd` |
+| 智慧巡檢 Smart Pulse | `every: 4 hours`（2026-11-14 主人指示降頻，原 30 分鐘） | `changes: true`（輸出不變就不喚醒，0 Token） | `brain/scripts/pulse_check.cmd` |
 | 晨間簡報 Morning Brief | `cron: 0 8 * * *` (Asia/Taipei) | 無 | `brain/scripts/morning_brief.py` |
 | 夜間沉澱 Nightly Reflection | `cron: 30 23 * * *` | 無 | `brain/scripts/nightly_reflection.cmd` |
 
