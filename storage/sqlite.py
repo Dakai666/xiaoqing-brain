@@ -1,3 +1,4 @@
+import os
 import sqlite3
 import json
 from typing import List, Optional
@@ -5,9 +6,18 @@ from datetime import datetime
 from ..models.memory_unit import MemoryUnit
 
 
+#: 記憶資料目錄。優先用 XIAOQING_DATA_DIR（opencode.json 已設定），
+#: 否則用 brain 套件旁的 data/。**不要用相對路徑**：
+#: 相對路徑綁定 CWD，從其他目錄執行會開出一個空庫。
+DATA_DIR = os.environ.get(
+    "XIAOQING_DATA_DIR",
+    os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data"),
+)
+
+
 class SQLiteStorage:
-    def __init__(self, db_path: str = "./data/memories.db"):
-        self.db_path = db_path
+    def __init__(self, db_path: str = None):
+        self.db_path = db_path or os.path.join(DATA_DIR, "memories.db")
         self._ensure_table()
 
     def _ensure_table(self):

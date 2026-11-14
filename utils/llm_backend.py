@@ -59,7 +59,7 @@ class LLMBackend(ABC):
         pass
 
     @abstractmethod
-    async def embeddings(self, model: str, prompt: str) -> dict:
+    async def embeddings(self, model: str, prompt: str, **kwargs) -> dict:
         pass
 
 
@@ -88,9 +88,21 @@ class OllamaBackend(LLMBackend):
         )
         return response
 
-    async def embeddings(self, model: str, prompt: str) -> dict:
+    async def embeddings(self, model: str, prompt: str, **kwargs) -> dict:
+        """向 Ollama 請求 embedding。
+
+        `options` 可透傳給 llama.cpp（例如 `{"num_ctx": 2048}`）。
+        embedding 是短文字輸入，預設 40960 的 context 只會白吃 ~5.5 GB VRAM，
+        而輸出向量逐位元相同。`keep_alive` 控制模型在請求後保留多久（秒）；
+        不傳則由伺服器端 OLLAMA_KEEP_ALIVE 決定。
+        """
         client = self._client()
-        response = client.embeddings(model=model, prompt=prompt)
+        payload = {"model": model, "prompt": prompt}
+        if kwargs.get("options") is not None:
+            payload["options"] = kwargs["options"]
+        if kwargs.get("keep_alive") is not None:
+            payload["keep_alive"] = kwargs["keep_alive"]
+        response = client.embeddings(**payload)
         return response
 
 
@@ -183,7 +195,7 @@ class MiniMaxBackend(LLMBackend):
             "raw": data,
         }
 
-    async def embeddings(self, model: str, prompt: str) -> dict:
+    async def embeddings(self, model: str, prompt: str, **kwargs) -> dict:
         """Embeddings — Anthropic Messages API 沒有 embedding 端點。
 
         MiniMax 自己的 embedding 模型（如 embo-01）走 MiniMax 的
@@ -192,7 +204,7 @@ class MiniMaxBackend(LLMBackend):
         """
         if model == EMBED_MODEL_MINIMAX or model.startswith("embo"):
             return await self._minimax_embeddings(model, prompt)
-        return await self.embed_fallback.embeddings(model, prompt)
+        return await self.embed_fallback.embeddings(model, prompt, **kwargs)
 
     async def _minimax_embeddings(self, model: str, prompt: str) -> dict:
         client = self._get_client()

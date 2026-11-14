@@ -1,4 +1,5 @@
 import json
+import sys
 from datetime import datetime
 from typing import List, Optional
 from ..models.memory_unit import MemoryUnit
@@ -72,7 +73,7 @@ class IntentRetriever:
             
             return json.loads(content)
         except (json.JSONDecodeError, ValueError, Exception) as e:
-            print(f"Intent analysis error: {e}")
+            print(f"Intent analysis error: {e}", file=sys.stderr, flush=True)
             return {
                 "intent_type": "simple",
                 "search_keywords": query.split(),

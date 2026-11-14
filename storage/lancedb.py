@@ -1,4 +1,5 @@
 import os
+import sys
 import lancedb
 import pyarrow as pa
 from typing import List, Optional
@@ -9,15 +10,34 @@ EMBED_MODEL_OLLAMA = os.environ.get("XIAOQING_EMBED_MODEL", "qwen3-embedding:lat
 EMBED_MODEL_MINIMAX = "embo-01"
 DEFAULT_EMBED_DIM = int(os.environ.get("XIAOQING_EMBED_DIM", "4096"))
 
+#: 記憶資料目錄（絕對路徑，避免綁 CWD）
+DATA_DIR = os.environ.get(
+    "XIAOQING_DATA_DIR",
+    os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data"),
+)
+
+#: embedding 請求的 context 長度。模型自帶 40960 上限，但記憶是短文字，
+#: 實測 num_ctx 從 40960 降到 2048 → VRAM 10.54 GB → 5.05 GB、RAM 12.4 GB → 6.7 GB，
+#: 而輸出向量逐位元相同（cos = 1.00000000, maxdiff = 0）。可用 XIAOQING_EMBED_NUM_CTX 覆寫。
+EMBED_NUM_CTX = int(os.environ.get("XIAOQING_EMBED_NUM_CTX", "2048"))
+EMBED_OPTIONS = {"num_ctx": EMBED_NUM_CTX}
+
+#: embedding 模型在請求後保留多久（秒）。同一批連續寫入會重用模型，
+#: 批次結束後自動卸載，VRAM 回到基線。
+#: 明確指定而非交給伺服器端，是因為 Ollama API 請求層的預設值（5m）會蓋過
+#: 伺服器端的 OLLAMA_KEEP_ALIVE。設 0 會讓每一筆寫入都重新載入模型，不建議。
+EMBED_KEEP_ALIVE = int(os.environ.get("XIAOQING_EMBED_KEEP_ALIVE", "120") or 120)
+
 
 class LanceDBStorage:
     def __init__(
         self,
-        db_path: str = "./data/lancedb",
+        db_path: str = None,
         embed_model: Optional[str] = None,
         embed_dim: Optional[int] = None,
     ):
-        self.db_path = db_path
+        # 絕對路徑：相對路徑綁定 CWD，從其他目錄執行會開出一個空庫。
+        self.db_path = db_path or os.path.join(DATA_DIR, "lancedb")
         self.embed_dim = embed_dim if embed_dim is not None else DEFAULT_EMBED_DIM
 
         api_key = os.getenv("MINIMAX_API_KEY", "")
@@ -32,7 +52,7 @@ class LanceDBStorage:
             self.embed_model = embed_model or EMBED_MODEL_OLLAMA
             self.use_minimax = False
         
-        self.db = lancedb.connect(db_path)
+        self.db = lancedb.connect(self.db_path)
         self._ensure_table()
 
     def _ensure_table(self):
@@ -49,7 +69,7 @@ class LanceDBStorage:
         missing = required_fields - schema_names
         
         if missing:
-            print(f"[LanceDB] Migration needed: adding {missing}")
+            print(f"[LanceDB] Migration needed: adding {missing}", file=sys.stderr, flush=True)
             try:
                 import pyarrow as pa
                 results = table.search(None).limit(10000).to_list()
@@ -65,9 +85,9 @@ class LanceDBStorage:
                 self.db.create_table("memories", schema=self._schema())
                 if new_records:
                     self.db["memories"].add(new_records)
-                print(f"[LanceDB] Migration complete: {len(new_records)} records")
+                print(f"[LanceDB] Migration complete: {len(new_records)} records", file=sys.stderr, flush=True)
             except Exception as e:
-                print(f"[LanceDB] Migration failed: {e}")
+                print(f"[LanceDB] Migration failed: {e}", file=sys.stderr, flush=True)
                 try:
                     self.db.create_table("memories", schema=self._schema())
                 except Exception:
@@ -98,18 +118,20 @@ class LanceDBStorage:
         ])
 
     async def _embed(self, text: str) -> List[float]:
+        # keep_alive <= 0 表示交給伺服器端 OLLAMA_KEEP_ALIVE 決定
+        extra = {"options": EMBED_OPTIONS, "keep_alive": EMBED_KEEP_ALIVE}
         try:
             from ..utils.llm_backend import get_llm_backend
             backend = get_llm_backend()
             model = self.embed_model if self.use_minimax else EMBED_MODEL_OLLAMA
-            response = await backend.embeddings(model, text)
+            response = await backend.embeddings(model, text, **extra)
             return response["embedding"]
         except Exception as e:
             if self.use_minimax:
-                print(f"MiniMax embeddings failed ({e}), falling back to Ollama")
+                print(f"MiniMax embeddings failed ({e}), falling back to Ollama", file=sys.stderr, flush=True)
                 from ..utils.llm_backend import OllamaBackend
                 backend = OllamaBackend()
-                response = await backend.embeddings(EMBED_MODEL_OLLAMA, text)
+                response = await backend.embeddings(EMBED_MODEL_OLLAMA, text, **extra)
                 return response["embedding"]
             raise
 
@@ -188,7 +210,7 @@ class LanceDBStorage:
             )
             return True
         except Exception as e:
-            print(f"[LanceDB] supersede failed: {e}")
+            print(f"[LanceDB] supersede failed: {e}", file=sys.stderr, flush=True)
             return False
 
     def delete(self, memory_id: str) -> bool:
@@ -198,7 +220,7 @@ class LanceDBStorage:
             table.delete(f"id = '{memory_id}' OR id LIKE '{memory_id}%'")
             return True
         except Exception as e:
-            print(f"[LanceDB] delete failed: {e}")
+            print(f"[LanceDB] delete failed: {e}", file=sys.stderr, flush=True)
             return False
 
     async def get_by_topic(self, topic: str) -> List[MemoryUnit]:

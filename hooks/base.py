@@ -1,4 +1,5 @@
 import re
+import sys
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING
 
@@ -87,6 +88,6 @@ class HookRegistry:
                         hook_name=hook.name,
                     )
                     errors.append(error_event)
-                    print(f"[Hook Error] {hook.name}: {e}", flush=True)
+                    print(f"[Hook Error] {hook.name}: {e}", flush=True, file=sys.stderr)
 
         return errors

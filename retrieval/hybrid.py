@@ -1,3 +1,4 @@
+import sys
 from typing import List, Optional
 from ..models.memory_unit import MemoryUnit
 from ..models.topics import TOPICS, is_valid_topic
@@ -41,7 +42,7 @@ class HybridRetriever:
         try:
             vector_results = await self.vector_search(query, top_k)
         except Exception as e:
-            print(f"[HybridRetriever] 向量檢索失敗，降級為 BM25: {e}", flush=True)
+            print(f"[HybridRetriever] 向量檢索失敗，降級為 BM25: {e}", flush=True, file=sys.stderr)
             vector_results = []
         bm25_results = self.bm25_search(query, top_k)
 
@@ -65,6 +66,7 @@ class HybridRetriever:
             print(
                 f"[HybridRetriever] 向量寫入失敗，已降級為 SQLite/BM25/markdown: {e}",
                 flush=True,
+                file=sys.stderr,
             )
         self.sqlite.add(memory)
         self.markdown.add_memory(memory)

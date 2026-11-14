@@ -163,6 +163,28 @@
 - **向量檢索已就緒但檢索主走 BM25**：主人判斷目前記憶量（十幾筆）還不需要 embedding，等真的變多再說。`hybrid.py` 有降級，向量層失敗不會讓整個查詢掛掉。
 - **LLM** 走 MiniMax API（Anthropic Messages 格式），key 在 `C:\Users\User\xiaoqing\.env`（`opencode.json` 裡那把是失效的）
 
+### GPU / Ollama 資源管理（2026-11-14 實測優化）
+
+硬體：RTX 5070 Ti（16 GB VRAM）、Ryzen 7 9800X3D、63.65 GB RAM。
+
+| 項目 | 現況 |
+|---|---|
+| Ollama 服務常駐成本 | 101 MB RAM、CPU 0.15% → **刻意維持常駐**（不值得做按需啟動） |
+| 模型閒置卸載 | `keep_alive=120` 秒後自動卸載，VRAM 回到基線 |
+| embedding num_ctx | **2048**（預設 40960 會白吃 10.54 GB VRAM；降到 2048 後 5.05 GB，**向量逐位元相同**） |
+| 同時載入模型數 | `OLLAMA_MAX_LOADED_MODELS=1`（避免 embedding + 9b 同時爆卡） |
+| 開機自啟 | `Startup/Ollama_App.vbs`（單一進入點，避免與 App 搶 11434 埠） |
+
+⚠️ **MCP stdout 紅線**：`brain/` 底下的 `print()` **一律要加 `file=sys.stderr`**。
+`mcp_server.py` 與 hook 在同一個行程，印到 stdout 會污染 MCP 的 JSON-RPC 通道
+（歷史上已造成 19 次 `Invalid MCP stdio message`）。
+新增或修改任何會被 `memory_ingest.py` / `mcp_server.py` 載入的模組時，務必檢查 print。
+
+⚠️ **儲存層必須用絕對路徑**：`SQLiteStorage` / `LanceDBStorage` 走 `XIAOQING_DATA_DIR`，
+不要用 `./data/...`（相對路徑綁 CWD，換目錄執行會開出空庫）。
+
+完整記錄：`C:\Users\User\opencode\Ollama資源管理與優化.md`
+
 ### 模型名與 backend 必須一致（2026-11-09 修正）
 
 `MINIMAX_API_KEY` 一旦存在，`get_llm_backend()` 就會走 MiniMax API。此時模型名必須是

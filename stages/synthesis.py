@@ -1,4 +1,5 @@
 import json
+import sys
 from typing import List, Optional
 from ..models.memory_unit import MemoryUnit
 from ..utils.llm_backend import get_llm_backend, LLMBackend
@@ -107,7 +108,7 @@ class SynthesisStage:
             return synthesized if synthesized else memories
             
         except (json.JSONDecodeError, Exception) as e:
-            print(f"Synthesis error: {e}, content: {content[:200]}")
+            print(f"Synthesis error: {e}, content: {content[:200]}", file=sys.stderr, flush=True)
             return memories
 
     async def synthesize_if_needed(self) -> List[MemoryUnit]:

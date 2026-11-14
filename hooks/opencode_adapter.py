@@ -1,4 +1,5 @@
 import json
+import sys
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -42,7 +43,7 @@ class OpenCodeHook(MemoryHook):
     async def on_session_start(self, event: SessionStartEvent) -> None:
         # TODO: 注入相關歷史記憶到 context
         self._session_id = event.session_id
-        print(f"[OpenCodeHook] Session started: {event.session_id}", flush=True)
+        print(f"[OpenCodeHook] Session started: {event.session_id}", flush=True, file=sys.stderr)
 
     async def on_user_message(self, event: UserMessageEvent) -> None:
         msg = event.message.strip()
@@ -65,7 +66,7 @@ class OpenCodeHook(MemoryHook):
                             f"- [ID:{m.id[:8]}] [{m.topic}] {m.lossless_text}" for m in related
                         )
             except Exception as ex:
-                print(f"[OpenCodeHook] BM25 pre-check warning: {ex}", flush=True)
+                print(f"[OpenCodeHook] BM25 pre-check warning: {ex}", flush=True, file=sys.stderr)
 
             memories = await compression.process(msg, existing_memories_text=existing_text)
             superseded_count = 0
@@ -82,9 +83,10 @@ class OpenCodeHook(MemoryHook):
             print(
                 f"[OpenCodeHook] Extracted {len(memories)} memories from user message (superseded: {superseded_count})",
                 flush=True,
+                file=sys.stderr,
             )
         except Exception as e:
-            print(f"[OpenCodeHook] Error processing user message: {e}", flush=True)
+            print(f"[OpenCodeHook] Error processing user message: {e}", flush=True, file=sys.stderr)
 
     async def on_tool_use(self, event: ToolUseEvent) -> None:
         """記錄工具操作。
@@ -122,9 +124,9 @@ class OpenCodeHook(MemoryHook):
             )
             await retriever.add_memory(unit)
 
-            print(f"[OpenCodeHook] Recorded tool use: {event.tool_name}", flush=True)
+            print(f"[OpenCodeHook] Recorded tool use: {event.tool_name}", flush=True, file=sys.stderr)
         except Exception as e:
-            print(f"[OpenCodeHook] Error recording tool use: {e}", flush=True)
+            print(f"[OpenCodeHook] Error recording tool use: {e}", flush=True, file=sys.stderr)
 
     async def on_stop(self, event: StopEvent) -> None:
         """生成 session 摘要日記，儲存為 diary 記憶"""
@@ -140,7 +142,7 @@ class OpenCodeHook(MemoryHook):
             memories = sqlite.get_by_session(sid)
 
             if len(memories) < 2:
-                print(f"[OpenCodeHook] Session {sid[:8]} has {len(memories)} memories, skip summary", flush=True)
+                print(f"[OpenCodeHook] Session {sid[:8]} has {len(memories)} memories, skip summary", flush=True, file=sys.stderr)
                 return
 
             synthesis = SynthesisStage(model=self._model)
@@ -152,15 +154,15 @@ class OpenCodeHook(MemoryHook):
                 m.topic = "diary"
                 await retriever.add_memory(m)
 
-            print(f"[OpenCodeHook] Session {sid[:8]} summary: {len(memories)} memories → {len(synthesized)} diary entries", flush=True)
+            print(f"[OpenCodeHook] Session {sid[:8]} summary: {len(memories)} memories → {len(synthesized)} diary entries", flush=True, file=sys.stderr)
         except Exception as e:
-            print(f"[OpenCodeHook] Error generating session summary: {e}", flush=True)
+            print(f"[OpenCodeHook] Error generating session summary: {e}", flush=True, file=sys.stderr)
 
     async def on_session_end(self, event: SessionEndEvent) -> None:
         # 背景整併排程已於 2026-11-09 移除，session 摘要改由 on_session_summary 主動產生
         sid = self._session_id
         self._session_id = None
-        print(f"[OpenCodeHook] Session ended: {sid}", flush=True)
+        print(f"[OpenCodeHook] Session ended: {sid}", flush=True, file=sys.stderr)
 
     @staticmethod
     def _summarize_args(args: dict) -> str:
