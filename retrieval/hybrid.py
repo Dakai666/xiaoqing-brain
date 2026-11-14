@@ -21,9 +21,7 @@ class HybridRetriever:
         self._indexed = False
 
     def sync_bm25(self):
-        all_memories = self.sqlite.get_by_session("")
-        if not all_memories:
-            all_memories = self.sqlite.search("", 1000)
+        all_memories = self.sqlite.get_active_memories(1000)
         self.bm25.index(all_memories)
         self._indexed = True
 
@@ -37,10 +35,16 @@ class HybridRetriever:
     async def search(self, query: str, top_k: int = 5) -> dict:
         if not self._indexed:
             self.sync_bm25()
-        
-        vector_results = await self.vector_search(query, top_k)
+
+        # 向量檢索失敗（例如 embedding 額度用盡、模型未就緒）時降級為純 BM25，
+        # 寧可檢索品質差，也不要整個查詢掛掉。
+        try:
+            vector_results = await self.vector_search(query, top_k)
+        except Exception as e:
+            print(f"[HybridRetriever] 向量檢索失敗，降級為 BM25: {e}", flush=True)
+            vector_results = []
         bm25_results = self.bm25_search(query, top_k)
-        
+
         return {
             "vector": vector_results,
             "bm25": bm25_results,
@@ -53,7 +57,15 @@ class HybridRetriever:
 
     async def add_memory(self, memory: MemoryUnit):
         memory = self._validate_topic(memory)
-        await self.lancedb.add(memory)
+        try:
+            await self.lancedb.add(memory)
+        except Exception as e:
+            # 向量層失敗（例如 embedding 模型未就緒、額度用盡）時降級：
+            # 記憶仍要寫進 SQLite / BM25 / markdown，否則整段互動就白記了。
+            print(
+                f"[HybridRetriever] 向量寫入失敗，已降級為 SQLite/BM25/markdown: {e}",
+                flush=True,
+            )
         self.sqlite.add(memory)
         self.markdown.add_memory(memory)
         self.bm25.add(memory)

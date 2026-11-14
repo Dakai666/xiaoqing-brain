@@ -1,3 +1,4 @@
+import json
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -52,16 +53,46 @@ class OpenCodeHook(MemoryHook):
             compression = self._get_compression()
             retriever = self._get_retriever()
 
-            memories = await compression.process(msg)
+            # 先用 BM25 找出現有最相關的 5 筆有效記憶，供 LLM 比對是否需要翻新（supersede）
+            existing_text = "無"
+            try:
+                active = retriever.sqlite.get_active_memories(limit=300)
+                if active:
+                    retriever.bm25.index(active)
+                    related = retriever.bm25_search(msg, top_k=5)
+                    if related:
+                        existing_text = "\n".join(
+                            f"- [ID:{m.id[:8]}] [{m.topic}] {m.lossless_text}" for m in related
+                        )
+            except Exception as ex:
+                print(f"[OpenCodeHook] BM25 pre-check warning: {ex}", flush=True)
+
+            memories = await compression.process(msg, existing_memories_text=existing_text)
+            superseded_count = 0
             for m in memories:
                 m.session_id = event.session_id
                 await retriever.add_memory(m)
+                if m.provenance and m.provenance.startswith("supersedes:"):
+                    old_id = m.provenance.split("supersedes:", 1)[1].strip()
+                    if old_id:
+                        retriever.sqlite.supersede(old_id, m.id)
+                        retriever.lancedb.supersede(old_id, m.id)
+                        superseded_count += 1
 
-            print(f"[OpenCodeHook] Extracted {len(memories)} memories from user message", flush=True)
+            print(
+                f"[OpenCodeHook] Extracted {len(memories)} memories from user message (superseded: {superseded_count})",
+                flush=True,
+            )
         except Exception as e:
             print(f"[OpenCodeHook] Error processing user message: {e}", flush=True)
 
     async def on_tool_use(self, event: ToolUseEvent) -> None:
+        """記錄工具操作。
+
+        刻意「不」呼叫 LLM：一次對話動輒 5-10 次工具呼叫，
+        每個都跑一次 compression 抽取會把額度與時間燒光。
+        這裡直接寫入結構化記憶，語意整理交給 on_stop 的 synthesis。
+        """
         if not event.tool_name:
             return
 
@@ -71,20 +102,25 @@ class OpenCodeHook(MemoryHook):
             return
 
         try:
-            compression = self._get_compression()
+            from ..models.memory_unit import IntentType, MemoryUnit
+
             retriever = self._get_retriever()
 
-            result_str = str(event.result)[:500] if event.result else "(no result)"
-            content = (
-                f"Agent 使用工具 [{event.tool_name}]，"
-                f"參數: {self._summarize_args(event.args)}，"
-                f"結果: {result_str}"
-            )
+            args = event.args if isinstance(event.args, dict) else {}
+            arg_text = json.dumps(args, ensure_ascii=False)[:300]
+            result_text = (event.result or "")[:300]
 
-            memories = await compression.process(content)
-            for m in memories:
-                m.session_id = event.session_id
-                await retriever.add_memory(m)
+            unit = MemoryUnit(
+                lossless_text=(
+                    f"Agent 使用工具 [{event.tool_name}]，"
+                    f"參數: {arg_text}，結果: {result_text}"
+                ),
+                keywords=[event.tool_name, "工具操作"],
+                topic="event",
+                intent_type=IntentType.FACT,
+                session_id=event.session_id,
+            )
+            await retriever.add_memory(unit)
 
             print(f"[OpenCodeHook] Recorded tool use: {event.tool_name}", flush=True)
         except Exception as e:
@@ -121,7 +157,7 @@ class OpenCodeHook(MemoryHook):
             print(f"[OpenCodeHook] Error generating session summary: {e}", flush=True)
 
     async def on_session_end(self, event: SessionEndEvent) -> None:
-        # TODO: 觸發 consolidation scheduler 立即處理此 session
+        # 背景整併排程已於 2026-11-09 移除，session 摘要改由 on_session_summary 主動產生
         sid = self._session_id
         self._session_id = None
         print(f"[OpenCodeHook] Session ended: {sid}", flush=True)

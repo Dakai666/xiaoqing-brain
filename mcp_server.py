@@ -2,7 +2,48 @@
 import sys
 import os
 
-sys.path.insert(0, '/home/user/.kimaki/projects/xiaoqing')
+BRAIN_DIR = os.path.dirname(os.path.abspath(__file__))
+PROJECT_ROOT = os.path.dirname(BRAIN_DIR)
+BRAIN_DATA_DIR = os.environ.get(
+    "XIAOQING_DATA_DIR",
+    os.path.join(BRAIN_DIR, "data"),
+)
+os.environ["XIAOQING_DATA_DIR"] = BRAIN_DATA_DIR
+os.chdir(BRAIN_DIR)
+
+if PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, PROJECT_ROOT)
+
+ENV_FILE = os.environ.get("XIAOQING_ENV_FILE", os.path.join(PROJECT_ROOT, ".env"))
+
+
+def _load_env() -> None:
+    """載入 .env（不覆蓋既有環境變數）。
+
+    必須在讀取 XIAOQING_LLM_MODEL 等變數「之前」呼叫，否則 .env 的設定會
+    被預設值蓋掉，造成模型名跟實際 backend 不一致。
+    """
+    if not os.path.isfile(ENV_FILE):
+        return
+    with open(ENV_FILE, "r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, _, value = line.partition("=")
+            key = key.strip()
+            value = value.strip().strip('"').strip("'")
+            if key and key not in os.environ:
+                os.environ[key] = value
+
+
+_load_env()
+
+LLM_MODEL = os.environ.get("XIAOQING_LLM_MODEL", "") or ""
+EMBED_MODEL = os.environ.get("XIAOQING_EMBED_MODEL", "")
+HEALTH_FILE = os.path.join(BRAIN_DATA_DIR, "brain_mcp_status.json")
+
+os.makedirs(BRAIN_DATA_DIR, exist_ok=True)
 
 import asyncio
 from datetime import datetime, timezone
@@ -12,21 +53,15 @@ from mcp.server.stdio import stdio_server
 
 from brain.models.memory_unit import MemoryUnit
 from brain.stages.compression import CompressionStage
-from brain.stages.consolidation import ConsolidationScheduler
-from brain.stages.synthesis import SynthesisStage
 from brain.storage.sqlite import SQLiteStorage
 from brain.storage.lancedb import LanceDBStorage
-from brain.storage.markdown import MarkdownBackup
 from brain.retrieval.hybrid import HybridRetriever
 from brain.retrieval.intent import IntentRetriever
-from brain.utils.llm_backend import MiniMaxBackend, set_llm_backend
+from brain.utils.llm_backend import MiniMaxBackend, OllamaBackend, set_llm_backend
 from brain.accounting import AccountingService
 from brain.hooks.base import HookRegistry
 from brain.hooks.opencode_adapter import OpenCodeHook
-from brain.hooks.events import (
-    SessionStartEvent, UserMessageEvent, ToolUseEvent,
-    StopEvent, SessionEndEvent,
-)
+from brain.hooks.ingest import IngestError, dispatch_events
 
 
 server = Server("xiaoqing-memory")
@@ -142,6 +177,31 @@ async def list_tools() -> list[Tool]:
             }
         ),
         Tool(
+            name="memory_refresh",
+            description="翻新（Supersede）一筆舊記憶：當主人的偏好、專案狀態、模型設定或決策發生改變時，將舊記憶標記為已過時（is_superseded=1），並寫入最新版本的記憶，確保檢索不會讀到過期資訊。",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "old_memory_id": {"type": "string", "description": "要被取代的舊記憶 ID（完整 ID 或前 8 碼皆可）"},
+                    "new_content": {"type": "string", "description": "翻新後的完整最新記憶內容"},
+                    "topic": {"type": "string", "description": "主題分類（如 preference, decision, technical, project, personal, routine）", "default": "preference"},
+                    "keywords": {"type": "array", "items": {"type": "string"}, "description": "關鍵詞列表"}
+                },
+                "required": ["old_memory_id", "new_content"]
+            }
+        ),
+        Tool(
+            name="memory_delete",
+            description="刪除一筆錯誤或不再需要的記憶（完整 ID 或前 8 碼皆可）",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "memory_id": {"type": "string", "description": "要刪除的記憶 ID"}
+                },
+                "required": ["memory_id"]
+            }
+        ),
+        Tool(
             name="accounting_add",
             description="新增一筆帳目記錄（支援自然語言或結構化輸入）",
             inputSchema={
@@ -233,6 +293,15 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
         return await _memory_get_by_person(arguments["person"])
     elif name == "memory_get_context":
         return await _memory_get_context(arguments["context"], arguments.get("top_k", 3))
+    elif name == "memory_refresh":
+        return await _memory_refresh(
+            arguments["old_memory_id"],
+            arguments["new_content"],
+            arguments.get("topic", "preference"),
+            arguments.get("keywords", []),
+        )
+    elif name == "memory_delete":
+        return await _memory_delete(arguments["memory_id"])
     elif name == "accounting_add":
         return await _accounting_add(arguments["text"], arguments["session_id"])
     elif name == "accounting_summary":
@@ -419,22 +488,43 @@ async def _memory_search(query: str, ids: list, top_k: int, start_date: str = ""
 
 
 async def _memory_add(session_id: str, content: str) -> list[TextContent]:
-    compression = CompressionStage(model="MiniMax-M2.7")
+    compression = CompressionStage(model=LLM_MODEL)
     retriever = HybridRetriever()
     
     clean_content, is_private, private_hash = MemoryUnit.parse_private_tags(content)
     
-    memories = await compression.process(clean_content)
+    existing_text = "無"
+    try:
+        active = retriever.sqlite.get_active_memories(limit=300)
+        if active:
+            retriever.bm25.index(active)
+            related = retriever.bm25_search(clean_content, top_k=5)
+            if related:
+                existing_text = "\n".join(
+                    f"- [ID:{m.id[:8]}] [{m.topic}] {m.lossless_text}" for m in related
+                )
+    except Exception:
+        pass
+
+    memories = await compression.process(clean_content, existing_memories_text=existing_text)
     
+    superseded_ids = []
     for m in memories:
         m.session_id = session_id
         if is_private:
             m.is_private = True
             m.private_hash = private_hash
         await retriever.add_memory(m)
+        if m.provenance and m.provenance.startswith("supersedes:"):
+            old_id = m.provenance.split("supersedes:", 1)[1].strip()
+            if old_id:
+                retriever.sqlite.supersede(old_id, m.id)
+                retriever.lancedb.supersede(old_id, m.id)
+                superseded_ids.append(old_id)
     
     private_note = "（含私人資料已脫敏）" if is_private else ""
-    return [TextContent(type="text", text=f"已儲存 {len(memories)} 個記憶單元 {private_note}")]
+    sup_note = f"（已自動翻新舊記憶: {', '.join(superseded_ids)}）" if superseded_ids else ""
+    return [TextContent(type="text", text=f"已儲存 {len(memories)} 個記憶單元 {private_note}{sup_note}")]
 
 
 async def _memory_get_by_topic(topic: str) -> list[TextContent]:
@@ -484,13 +574,63 @@ async def _memory_get_context(context: str, top_k: int = 3) -> list[TextContent]
         time_distance = m.get_time_distance()
         confidence_pct = int(m.confidence * 100)
 
-        lines.append(f"\n{i}. {m.lossless_text}")
+        lines.append(f"\n{i}. [ID:{m.id[:8]}] [{m.topic}] {m.lossless_text}")
         lines.append(f"   💡 這是{time_distance}的事，信心度 {confidence_pct}%")
         if m.keywords:
             lines.append(f"   關鍵詞: {', '.join(m.keywords[:3])}")
 
     output.append(TextContent(type="text", text="\n".join(lines)))
     return output
+
+
+async def _memory_refresh(old_memory_id: str, new_content: str, topic: str = "preference", keywords: list = None) -> list[TextContent]:
+    """翻新舊記憶：標記舊記憶為 superseded，並寫入新記憶"""
+    try:
+        from brain.models.memory_unit import IntentType, DecayRate
+        retriever = HybridRetriever()
+        clean_content, is_private, private_hash = MemoryUnit.parse_private_tags(new_content)
+        
+        intent_map = {
+            "preference": IntentType.PREFERENCE,
+            "routine": IntentType.HABIT,
+        }
+        decay_map = {
+            "preference": DecayRate.SLOW,
+            "decision": DecayRate.SLOW,
+            "personal": DecayRate.NONE,
+            "technical": DecayRate.SLOW,
+        }
+        unit = MemoryUnit(
+            lossless_text=clean_content,
+            keywords=keywords if isinstance(keywords, list) and keywords else [topic, "記憶翻新"],
+            topic=topic or "preference",
+            intent_type=intent_map.get(topic, IntentType.FACT),
+            decay_rate=decay_map.get(topic, DecayRate.NORMAL),
+            session_id="memory_refresh",
+            provenance=f"supersedes:{old_memory_id}",
+            is_private=is_private,
+            private_hash=private_hash,
+        )
+        await retriever.add_memory(unit)
+        sql_ok = retriever.sqlite.supersede(old_memory_id, unit.id)
+        retriever.lancedb.supersede(old_memory_id, unit.id)
+        return [TextContent(
+            type="text",
+            text=f"✨ 記憶已翻新！\n- 舊記憶 `{old_memory_id}` 已標記為過時 (SQLite={sql_ok})\n- 新記憶 `{unit.id[:8]}` 已寫入：[{unit.topic}] {unit.lossless_text}"
+        )]
+    except Exception as e:
+        return [TextContent(type="text", text=f"❌ 記憶翻新失敗: {e}")]
+
+
+async def _memory_delete(memory_id: str) -> list[TextContent]:
+    """刪除指定記憶"""
+    try:
+        retriever = HybridRetriever()
+        sql_ok = retriever.sqlite.delete(memory_id)
+        retriever.lancedb.delete(memory_id)
+        return [TextContent(type="text", text=f"🗑️ 記憶 `{memory_id}` 已刪除 (SQLite={sql_ok})")]
+    except Exception as e:
+        return [TextContent(type="text", text=f"❌ 記憶刪除失敗: {e}")]
 
 
 async def _accounting_add(text: str, session_id: str) -> list[TextContent]:
@@ -524,87 +664,37 @@ async def _lifecycle_event(arguments: dict) -> list[TextContent]:
     """處理 lifecycle event，分發到已註冊的 hooks"""
     global _hook_registry
 
-    event_type = arguments.get("event_type", "")
-    session_id = arguments.get("session_id", "")
-    timestamp = datetime.now(timezone.utc).isoformat()
-
-    _REQUIRED_FIELDS = {
-        "session_start": [],
-        "user_message": ["message"],
-        "tool_use": ["tool_name"],
-        "stop": [],
-        "session_end": [],
-    }
-
-    if event_type in _REQUIRED_FIELDS:
-        for field in _REQUIRED_FIELDS[event_type]:
-            if not arguments.get(field):
-                return [TextContent(
-                    type="text",
-                    text=f"❌ {event_type} 事件缺少必要欄位: {field}"
-                )]
-
     if not _hook_registry:
         return [TextContent(type="text", text="⚠️ Hook registry 尚未初始化")]
 
+    event_type = arguments.get("event_type", "")
+
     try:
-        if event_type == "session_start":
-            event = SessionStartEvent(
-                event_type=event_type,
-                timestamp=timestamp,
-                session_id=session_id,
-                agent_name=arguments.get("agent_name"),
-            )
-        elif event_type == "user_message":
-            event = UserMessageEvent(
-                event_type=event_type,
-                timestamp=timestamp,
-                session_id=session_id,
-                message=arguments.get("message", ""),
-            )
-        elif event_type == "tool_use":
-            event = ToolUseEvent(
-                event_type=event_type,
-                timestamp=timestamp,
-                session_id=session_id,
-                tool_name=arguments.get("tool_name", ""),
-                args=arguments.get("tool_args", {}),
-                result=arguments.get("tool_result", ""),
-            )
-        elif event_type == "stop":
-            event = StopEvent(
-                event_type=event_type,
-                timestamp=timestamp,
-                session_id=session_id,
-                reason=arguments.get("reason"),
-            )
-        elif event_type == "session_end":
-            event = SessionEndEvent(
-                event_type=event_type,
-                timestamp=timestamp,
-                session_id=session_id,
-                summary=arguments.get("summary"),
-            )
-        else:
-            return [TextContent(type="text", text=f"❌ 未知事件類型: {event_type}")]
+        errors = await dispatch_events(
+            _hook_registry,
+            [
+                {
+                    "event_type": event_type,
+                    "session_id": arguments.get("session_id", ""),
+                    "arguments": arguments,
+                }
+            ],
+        )
+    except IngestError as e:
+        return [TextContent(type="text", text=f"❌ {e}")]
 
-        errors = await _hook_registry.dispatch(event)
-        if errors:
-            error_msgs = "\n".join(
-                f"  - [{e.hook_name}] {e.error}" for e in errors
-            )
-            return [TextContent(
-                type="text",
-                text=f"⚠️ {event_type} 事件已分發，但 {len(errors)} 個 hook 失敗:\n{error_msgs}"
-            )]
-        return [TextContent(type="text", text=f"✅ {event_type} 事件已分發")]
-
-    except Exception as e:
-        return [TextContent(type="text", text=f"❌ Hook 執行錯誤: {str(e)}")]
+    if errors:
+        error_msgs = "\n".join(
+            f"  - [{e.hook_name}] {e.error}" for e in errors
+        )
+        return [TextContent(
+            type="text",
+            text=f"⚠️ {event_type} 事件已分發，但 {len(errors)} 個 hook 失敗:\n{error_msgs}"
+        )]
+    return [TextContent(type="text", text=f"✅ {event_type} 事件已分發")]
 
 
 def _write_health_status(status: str, error: str = None):
-    status_file = '/home/user/.kimaki/projects/xiaoqing/data/brain_mcp_status.json'
     import json
     from datetime import datetime
     data = {
@@ -613,43 +703,38 @@ def _write_health_status(status: str, error: str = None):
         "last_check": datetime.now().isoformat()
     }
     try:
-        with open(status_file, 'w') as f:
+        with open(HEALTH_FILE, 'w') as f:
             json.dump(data, f)
     except Exception:
         pass
 
 
 async def main():
-    global _hook_registry
+    global _hook_registry, LLM_MODEL
 
     try:
-        with open('/home/user/.kimaki/projects/xiaoqing/.env', 'r') as f:
-            for line in f:
-                if line.startswith('MINIMAX_API_KEY='):
-                    os.environ['MINIMAX_API_KEY'] = line.strip().split('=', 1)[1]
-                    break
-        
-        set_llm_backend(MiniMaxBackend())
-        
-        # Initialize hook system
+        # .env 已在 module 層載入（見 _load_env），這裡只需挑 backend 並校正模型名。
+        from brain.utils.llm_backend import configure_llm_backend
+
+        _backend, LLM_MODEL = configure_llm_backend(os.environ.get("XIAOQING_LLM_MODEL"))
+
         _hook_registry = HookRegistry()
         _hook_registry.register(OpenCodeHook())
         print(f"[Hook] Registered hooks: {len(_hook_registry._hooks)}", flush=True, file=sys.stderr)
-        
-        sqlite = SQLiteStorage()
-        synthesis = SynthesisStage(model="MiniMax-M2.7")
-        markdown_backup = MarkdownBackup()
-        scheduler = ConsolidationScheduler(sqlite, synthesis, markdown_backup, interval_hours=24)
-        scheduler.start()
-        
+
+        # 背景整併排程（ConsolidationScheduler）已於 2026-11-09 完整移除。
+        # 記憶改由「主動記憶」機制處理：session 結束時由 OpenCodeHook 產生摘要，
+        # 開新 session 時以 memory_get_context 注入相關記憶。
+        # （2026-11-09 查證：該排程自 2026-09-10 起從未成功產出過任何輸出。）
+
         _write_health_status("running")
-        print("MCP Server started successfully", flush=True, file=sys.stderr)
-        
+        print(f"MCP Server started successfully (model={LLM_MODEL})", flush=True, file=sys.stderr)
+
     except Exception as e:
         _write_health_status("error", str(e))
         print(f"MCP Server startup failed: {e}", flush=True, file=sys.stderr)
         raise
-    
+
     async with stdio_server() as (read_stream, write_stream):
         await server.run(
             read_stream,

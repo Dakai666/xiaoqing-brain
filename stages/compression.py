@@ -6,26 +6,30 @@ from ..utils.llm_backend import get_llm_backend, LLMBackend
 
 COMPRESSION_PROMPT = """從對話中提取值得保存的資訊，轉換為 JSON 格式的記憶單元。
 
+## 現有相關記憶（用於衝突與翻新比對）
+{existing_memories}
+
 每個記憶單元包含：
-- lossless_text: 完整、無歧義的表述
+- lossless_text: 完整、無歧義的表述（若含日期時間或專案路徑請保留）
 - keywords: 關鍵詞列表
 - persons: 涉及的人名
 - topic: 主題分類，必須是以下之一：
   personal, technical, preference, project, event, decision, learning, routine, general
 - intent_type: 意圖類型（影響圖標顯示），必須是以下之一：
-  🔵 fact（用戶明確陳述的事實，如「我叫小明」）
-  💫 impression（推斷、印象、猜測，如「他好像喜歡喝茶」）
-  🎯 preference（偏好、喜歡、厭惡，如「我不喜歡雨天」）
-  🌱 habit（習慣、日常行為，如「我每天早上運動」）
+  fact（用戶明確陳述的事實，如「我叫小明」）
+  impression（推斷、印象、猜測，如「他好像喜歡喝茶」）
+  preference（偏好、喜歡、厭惡，如「我不喜歡雨天」）
+  habit（習慣、日常行為，如「我每天早上運動」）
 - decay_rate: 衰減速度，必須是以下之一：
-  fast（天氣、新闻、當下事件 - 每天衰減50%）
+  fast（天氣、新聞、當下事件 - 每天衰減50%）
   normal（一般對話、日常資訊 - 每天衰減10%）
   slow（偏好、習慣、個人設定 - 每天衰減2%）
   none（身份、姓名、永久事實 - 不衰減）
+- supersedes_id: （選填）如果這筆新記憶「推翻、修改、升級或取代」了上方【現有相關記憶】中的某筆舊記憶，請填入該筆舊記憶的 ID（例如 "2a119128"），否則填 null。
 
 對話：{input}
 
-JSON 輸出："""
+JSON 輸出（若無值得保存的實質資訊請輸出 []）："""
 
 
 class CompressionStage:
@@ -42,8 +46,11 @@ class CompressionStage:
     def _get_backend(self) -> LLMBackend:
         return self.backend or get_llm_backend()
 
-    async def process(self, input_text: str) -> List[MemoryUnit]:
-        prompt = COMPRESSION_PROMPT.format(input=input_text)
+    async def process(self, input_text: str, existing_memories_text: str = "無") -> List[MemoryUnit]:
+        prompt = COMPRESSION_PROMPT.format(
+            input=input_text,
+            existing_memories=existing_memories_text or "無",
+        )
         backend = self._get_backend()
         
         response = await backend.chat(
@@ -86,6 +93,7 @@ class CompressionStage:
                 if isinstance(item, dict):
                     unit_data = item.get("memory_unit", item)
                     if isinstance(unit_data, dict) and "lossless_text" in unit_data:
+                        unit_data.pop("id", None)
                         if not isinstance(unit_data.get("persons"), list):
                             unit_data["persons"] = []
                         if not isinstance(unit_data.get("keywords"), list):
@@ -100,6 +108,9 @@ class CompressionStage:
                             it = unit_data["intent_type"]
                             clean = re.sub(r'[\U0001F300-\U0001F9FF]', '', it).strip()
                             unit_data["intent_type"] = clean
+                        supersedes_id = unit_data.pop("supersedes_id", None)
+                        if supersedes_id and isinstance(supersedes_id, str) and supersedes_id.lower() != "null":
+                            unit_data["provenance"] = f"supersedes:{supersedes_id.strip()}"
                         memories.append(MemoryUnit(**unit_data))
             return memories
         except (json.JSONDecodeError, Exception) as e:

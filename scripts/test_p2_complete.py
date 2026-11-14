@@ -15,10 +15,8 @@ with open('.env', 'r') as f:
 from brain import (
     CompressionStage,
     SynthesisStage,
-    ConsolidationScheduler,
     HybridRetriever,
     IntentRetriever,
-    MemoryUnit,
 )
 from brain.utils.llm_backend import MiniMaxBackend, set_llm_backend
 
@@ -47,38 +45,6 @@ async def test_intent_retriever(retriever: HybridRetriever):
             for r in result['results'][:2]:
                 print(f"    - {r.lossless_text[:50]}...")
         print()
-
-
-async def test_consolidation(sqlite, synthesis):
-    print("\n=== Consolidation 測試 ===\n")
-    
-    scheduler = ConsolidationScheduler(sqlite, synthesis, interval_hours=1)
-    
-    print(f"初始狀態: {scheduler.get_stats()}")
-    
-    memories = [
-        MemoryUnit(
-            lossless_text="使用者喜歡喝咖啡",
-            keywords=["咖啡"],
-            topic="preference",
-            session_id="test-consolidation"
-        ),
-        MemoryUnit(
-            lossless_text="使用者偏好熱咖啡",
-            keywords=["熱咖啡"],
-            topic="preference",
-            session_id="test-consolidation"
-        ),
-    ]
-    
-    for m in memories:
-        sqlite.add(m)
-    
-    if scheduler.should_run():
-        result = await scheduler.run()
-        print(f"整合結果:")
-        for session_id, synthesized in result.items():
-            print(f"  Session {session_id}: {len(synthesized)} 個記憶")
 
 
 async def test_full_pipeline():
@@ -150,9 +116,6 @@ async def test_full_pipeline():
     start = time.time()
     await test_intent_retriever(retriever)
     print(f"    Intent 檢索時間: {time.time() - start:.2f}s")
-    
-    print("\n[8] 測試 Consolidation...")
-    await test_consolidation(retriever.sqlite, synthesis)
     
     print("\n" + "=" * 50)
     print("P2 測試完成！")

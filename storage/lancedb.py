@@ -5,8 +5,9 @@ from typing import List, Optional
 from ..models.memory_unit import MemoryUnit
 
 
-EMBED_MODEL_OLLAMA = "qwen3-embedding:4b"
+EMBED_MODEL_OLLAMA = os.environ.get("XIAOQING_EMBED_MODEL", "qwen3-embedding:latest")
 EMBED_MODEL_MINIMAX = "embo-01"
+DEFAULT_EMBED_DIM = int(os.environ.get("XIAOQING_EMBED_DIM", "4096"))
 
 
 class LanceDBStorage:
@@ -14,13 +15,17 @@ class LanceDBStorage:
         self,
         db_path: str = "./data/lancedb",
         embed_model: Optional[str] = None,
-        embed_dim: int = 2560,
+        embed_dim: Optional[int] = None,
     ):
         self.db_path = db_path
-        self.embed_dim = embed_dim
-        
+        self.embed_dim = embed_dim if embed_dim is not None else DEFAULT_EMBED_DIM
+
         api_key = os.getenv("MINIMAX_API_KEY", "")
-        if api_key and embed_model is None:
+        # MiniMax 的 embo-01 對 coding-plan key 沒有配額（每次都 429），
+        # 預設直接走本機 Ollama；要改用 MiniMax embedding 時設
+        # XIAOQING_EMBED_BACKEND=minimax。
+        want_minimax = os.getenv("XIAOQING_EMBED_BACKEND", "ollama").lower() == "minimax"
+        if want_minimax and api_key and embed_model is None:
             self.embed_model = EMBED_MODEL_MINIMAX
             self.use_minimax = True
         else:
@@ -93,18 +98,20 @@ class LanceDBStorage:
         ])
 
     async def _embed(self, text: str) -> List[float]:
-        if self.use_minimax:
-            try:
-                from ..utils.llm_backend import get_llm_backend
-                backend = get_llm_backend()
-                response = await backend.embeddings(self.embed_model, text)
-                return response["embedding"]
-            except Exception as e:
+        try:
+            from ..utils.llm_backend import get_llm_backend
+            backend = get_llm_backend()
+            model = self.embed_model if self.use_minimax else EMBED_MODEL_OLLAMA
+            response = await backend.embeddings(model, text)
+            return response["embedding"]
+        except Exception as e:
+            if self.use_minimax:
                 print(f"MiniMax embeddings failed ({e}), falling back to Ollama")
-        
-        import ollama
-        response = ollama.embeddings(model=EMBED_MODEL_OLLAMA, prompt=text)
-        return response["embedding"]
+                from ..utils.llm_backend import OllamaBackend
+                backend = OllamaBackend()
+                response = await backend.embeddings(EMBED_MODEL_OLLAMA, text)
+                return response["embedding"]
+            raise
 
     async def add(self, memory: MemoryUnit) -> str:
         vector = await self._embed(memory.lossless_text)
@@ -163,13 +170,36 @@ class LanceDBStorage:
         
         memories = []
         for r in results:
-            if r.get("is_private", False):
+            if r.get("is_private", False) or r.get("is_superseded", False):
                 continue
             memories.append(self._row_to_memory(r))
             if len(memories) >= top_k:
                 break
         
         return memories
+
+    def supersede(self, memory_id: str, replaced_by_id: str) -> bool:
+        """在 LanceDB 中標記舊記憶為已取代"""
+        try:
+            table = self.db["memories"]
+            table.update(
+                where=f"id = '{memory_id}' OR id LIKE '{memory_id}%'",
+                values={"is_superseded": True, "replaced_by": replaced_by_id}
+            )
+            return True
+        except Exception as e:
+            print(f"[LanceDB] supersede failed: {e}")
+            return False
+
+    def delete(self, memory_id: str) -> bool:
+        """在 LanceDB 中刪除記憶"""
+        try:
+            table = self.db["memories"]
+            table.delete(f"id = '{memory_id}' OR id LIKE '{memory_id}%'")
+            return True
+        except Exception as e:
+            print(f"[LanceDB] delete failed: {e}")
+            return False
 
     async def get_by_topic(self, topic: str) -> List[MemoryUnit]:
         results = self.db["memories"].search(None, vector_column_name="vector").where(f"topic = '{topic}'").limit(100).to_list()

@@ -1,5 +1,6 @@
 import sqlite3
 import json
+import os
 from typing import List, Optional, Dict, Any
 from datetime import datetime, date
 from enum import Enum
@@ -37,10 +38,14 @@ class Transaction:
 
 
 class AccountingStorage:
-    DB_PATH = "/home/user/.kimaki/projects/xiaoqing/data/accounting.db"
+    DB_PATH = os.path.join(
+        os.environ.get("XIAOQING_DATA_DIR", "./data"),
+        "accounting.db",
+    )
 
     def __init__(self, db_path: Optional[str] = None):
         self.db_path = db_path or self.DB_PATH
+        os.makedirs(os.path.dirname(self.db_path) or ".", exist_ok=True)
         self._ensure_table()
 
     def _ensure_table(self):

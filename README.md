@@ -1,18 +1,37 @@
-# 小晴大腦 - 記憶系統
+# 小晴大腦 - 記憶系統 (xiaoqing-brain v2.0)
 
 > 基於 SimpleMem 核心理念：有效率的記憶壓縮、整合與檢索
-> 2026-04-09 更新：新增記帳模組，系統更強大了！
+> **2026-11-14 v2.0 重大更新**：深度結合 **OpenCode 2.3 常駐型單一窗口 Agent 架構**（對標 Claude Duet / ChatGPT Dots）！
+> - **0 延遲自動記憶雷達 (`context` Hook + `memory_context_fast.py`)**：對話前毫秒級自動注入記憶，不再依賴模型自覺呼叫 MCP
+> - **主動/被動雙向記憶翻新 (`memory_refresh` + Supersede 自動衝突取代)**：舊設定或決策變更時自動淘汰舊記憶
+> - **自我呼叫排程鬧鐘 (`xiaoqing_wakeup_schedule`)**：小晴能自己改排程、打給未來的自己起床！
+> - **跨專案後廠委派 (`xiaoqing_delegate_project`)** 與 **常駐主窗口釘選 (`/master`)**
 
-## 整體架構
+## 整體架構 (V2 Hook + MCP 雙軌閉環)
 
 ```
-原始對話 ──→ CompressionStage ──→ SynthesisStage ──→ StorageStage ──→ RetrievalStage
-                    ↓                    ↓                ↓                ↓
-              MiniMax-M2.7        MiniMax-M2.7      LanceDB+         向量+BM25
-                                                     SQLite+MD       混合檢索
+[回合前：0 延遲記憶雷達注入]
+使用者發話 ──→ OpenCode 2.3 Server Plugin (`ctx.session.hook("context")`)
+                     ↓
+         `scripts/memory_context_fast.py` (<300ms SQLite 有效記憶 + Jieba BM25)
+                     ↓
+         自動注入 `<xiaoqing-companion-radar>` 至 System Prompt
+         (含關聯記憶 [ID:xxxxxxxx]、核心偏好、主動寫入與翻新守則)
+
+[回合中：主動固化、翻新與自我排程]
+小晴 Agent ──→ 發現新重點：呼叫 `memory_add`
+           ──→ 發現舊記憶過時：呼叫 `memory_refresh` (標記舊記憶 `is_superseded=1`)
+           ──→ 預約未來任務：呼叫 `xiaoqing_wakeup_schedule` / `schedule_create`
+
+[回合後：背景自動沉澱與衝突取代]
+Session Idle ──→ `scripts/memory_ingest.py` ──→ BM25 預檢相關舊記憶
+                     ↓
+               CompressionStage (MiniMax-M2.7 抽取 + 自動判斷 `supersedes_id`)
+                     ↓
+               SynthesisStage (日記濃縮) ──→ LanceDB + SQLite + Markdown
 ```
 
-**新增 2026-04：記帳模組（完全独立运作）**
+**記帳模組（獨立運作）**
 ```
 用戶輸入 ──→ AccountingParser ──→ SQLite (data/accounting.db)
               自然語言解析
@@ -121,7 +140,40 @@ Progressive Disclosure Layer 2 - 以某筆記憶為中心，回傳前後發生�
 { "name": "memory_get_context", "inputSchema": { "context": "string", "top_k": 3 } }
 ```
 
+### memory_refresh 🌟 NEW (2026-11-14)
+翻新（Supersede）一筆舊記憶：當主人的偏好、專案狀態、模型設定或決策發生改變時，將舊記憶標記為已過時（`is_superseded=1`），並寫入最新版本的記憶，確保檢索不會讀到過期資訊。
+```json
+{
+  "name": "memory_refresh",
+  "inputSchema": {
+    "old_memory_id": "string (完整 ID 或前 8 碼)",
+    "new_content": "string (最新完整內容)",
+    "topic": "preference | decision | technical | project | ...",
+    "keywords": ["string"]
+  }
+}
+```
+
+### memory_delete 🌟 NEW (2026-11-14)
+刪除一筆錯誤或不再需要的記憶（完整 ID 或前 8 碼皆可）
+```json
+{ "name": "memory_delete", "inputSchema": { "memory_id": "string" } }
+```
+
 ---
+
+## OpenCode 2.3 常駐管家插件 (`opencode_plugin/xiaoqing-memory.js`) 🌟 NEW (2026-11-14)
+
+搭配 OpenCode 2.3 的 Server Plugin 架構（安裝於 `~/.config/opencode/plugins/xiaoqing-memory.js`），提供以下原生能力：
+
+- **Direct Tools**：
+  - `xiaoqing_wakeup_schedule`：小晴自我呼叫鬧鐘（支援 `in`、`at`、`every`、`cron` 與零成本 `if_shell_run` 條件閘）
+  - `xiaoqing_wakeup_manage`：列出、暫停、恢復、刪除排程
+  - `xiaoqing_delegate_project`：前店後廠模式，派發背景 Worker Session 到指定專案目錄施工，完工自動回報主窗口
+  - `xiaoqing_master_window`：查看或釘選唯一常駐主窗口（Master Session）
+- **Slash Commands**：
+  - `/master`：將當前視窗釘選為「☀️ 小晴常駐主窗口」並檢視狀態
+  - `/wakeup`：快速檢視或設定自我喚醒排程
 
 ## Phase B: 智慧記憶系統升級 (2026-04-20) 🌟
 

@@ -43,6 +43,34 @@ class SQLiteStorage:
             conn.execute("CREATE INDEX IF NOT EXISTS idx_intent ON memories(intent_type)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_superseded ON memories(is_superseded)")
 
+    def supersede(self, memory_id: str, replaced_by_id: str) -> bool:
+        """將舊記憶標記為已被新記憶取代（is_superseded = 1）"""
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.execute(
+                "UPDATE memories SET is_superseded = 1, replaced_by = ? WHERE id = ? OR id LIKE ?",
+                (replaced_by_id, memory_id, f"{memory_id}%")
+            )
+            return cursor.rowcount > 0
+
+    def delete(self, memory_id: str) -> bool:
+        """永久刪除特定記憶"""
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.execute(
+                "DELETE FROM memories WHERE id = ? OR id LIKE ?",
+                (memory_id, f"{memory_id}%")
+            )
+            return cursor.rowcount > 0
+
+    def get_active_memories(self, limit: int = 500) -> List[MemoryUnit]:
+        """取得所有未被取代的有效記憶"""
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.execute(
+                "SELECT * FROM memories WHERE is_superseded = 0 ORDER BY timestamp DESC LIMIT ?",
+                (limit,)
+            )
+            return [self._row_to_memory(row) for row in cursor.fetchall()]
+
     def add(self, memory: MemoryUnit) -> str:
         with sqlite3.connect(self.db_path) as conn:
             conn.execute("""
@@ -75,7 +103,7 @@ class SQLiteStorage:
         with sqlite3.connect(self.db_path) as conn:
             conn.row_factory = sqlite3.Row
             cursor = conn.execute(
-                "SELECT * FROM memories WHERE lossless_text LIKE ? ORDER BY timestamp DESC LIMIT ?",
+                "SELECT * FROM memories WHERE is_superseded = 0 AND lossless_text LIKE ? ORDER BY timestamp DESC LIMIT ?",
                 (f"%{query}%", top_k)
             )
             return [self._row_to_memory(row) for row in cursor.fetchall()]
@@ -83,14 +111,14 @@ class SQLiteStorage:
     def get_by_topic(self, topic: str) -> List[MemoryUnit]:
         with sqlite3.connect(self.db_path) as conn:
             conn.row_factory = sqlite3.Row
-            cursor = conn.execute("SELECT * FROM memories WHERE topic = ? ORDER BY timestamp DESC", (topic,))
+            cursor = conn.execute("SELECT * FROM memories WHERE is_superseded = 0 AND topic = ? ORDER BY timestamp DESC", (topic,))
             return [self._row_to_memory(row) for row in cursor.fetchall()]
 
     def get_by_person(self, person: str) -> List[MemoryUnit]:
         with sqlite3.connect(self.db_path) as conn:
             conn.row_factory = sqlite3.Row
             cursor = conn.execute(
-                "SELECT * FROM memories WHERE persons LIKE ? ORDER BY timestamp DESC",
+                "SELECT * FROM memories WHERE is_superseded = 0 AND persons LIKE ? ORDER BY timestamp DESC",
                 (f"%{person}%",)
             )
             return [self._row_to_memory(row) for row in cursor.fetchall()]
