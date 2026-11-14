@@ -112,11 +112,74 @@ def check_disk() -> None:
         pass
 
 
+def gpu_headroom_mib() -> int:
+    """回傳可用的 VRAM（MiB）。0 = 查不到或沒有獨顯。"""
+    try:
+        import subprocess
+
+        out = subprocess.run(
+            ["nvidia-smi", "--query-gpu=memory.used,memory.total", "--format=csv,noheader,nounits"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        if out.returncode != 0:
+            return 0
+        used, total = (int(x) for x in out.stdout.strip().splitlines()[0].split(","))
+        return total - used
+    except Exception:
+        return 0
+
+
+def try_resync() -> None:
+    """GPU 有空檔時就自己把缺向量的記憶補回來（自癒）。
+
+    embedding 模型要佔約 5GB VRAM，所以先看餘量；不夠就跳過，
+    避免跟 DK 的 GPU 批次搶顯存。
+    """
+    headroom = gpu_headroom_mib()
+    if headroom and headroom < 7000:
+        add(f"（向量補寫暫緩：VRAM 餘量 {headroom} MiB，不足 7000 MiB，等 GPU 空檔）")
+        return
+    try:
+        import asyncio
+
+        from brain.storage.sqlite import SQLiteStorage
+        from brain.storage.lancedb import LanceDBStorage
+
+        sqlite = SQLiteStorage()
+        lancedb = LanceDBStorage()
+        lancedb_ids = {
+            r["id"]
+            for r in lancedb.db["memories"].search(None, vector_column_name="vector").limit(100000).to_list()
+        }
+        missing = [m for m in sqlite.get_all_memories(limit=100000) if m.id not in lancedb_ids]
+        if not missing:
+            return
+
+        async def _run():
+            ok = 0
+            for m in missing:
+                try:
+                    await lancedb.add(m)
+                    ok += 1
+                except Exception:
+                    pass
+            return ok
+
+        ok = asyncio.run(_run())
+        if ok:
+            add(f"已自動補回 {ok} 筆缺向量的記憶。")
+    except Exception as e:
+        add(f"向量補寫失敗：{e}")
+
+
 def main() -> int:
     check_new_memories()
     check_vector_drift()
     check_ollama()
     check_disk()
+    try_resync()
 
     # 完整中文報告寫入 UTF-8 檔案，供小晴在喚醒後讀取
     try:

@@ -125,8 +125,8 @@ def resync_vectors() -> None:
     不夠就跳過，留到下次（避免跟 DK 的 GPU 批次搶顯存）。
     """
     headroom = check_gpu_headroom()
-    if headroom and headroom < 6000:
-        add(f"VRAM 餘量只有 {headroom} MiB，不足 6000 MiB，本輪不補向量（留到 GPU 空檔時）。")
+    if headroom and headroom < 7000:
+        add(f"VRAM 餘量只有 {headroom} MiB，不足 7000 MiB，本輪不補向量（留到 GPU 空檔時）。")
         FLAGS.append("VECTOR-DRIFT")
         return
     try:
