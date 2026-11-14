@@ -2,11 +2,17 @@
 """小晴智慧巡檢 (Smart Pulse) — 零 Token 條件閘腳本。
 
 搭配 OpenCode 原生排程器的 `if` 條件閘（changes: true）使用：
-每 30 分鐘執行一次，輸出一份精簡狀態報告。
+每 30 分鐘執行一次，輸出精簡狀態報告。
 若輸出與上次完全相同，排程器判定為「無變化」→ 不喚醒 Session → 消耗 0 Token。
 
+⚠️ 輸出策略（Windows 相容性）：
+排程器在 Windows 上以 shell 執行本指令，stdout 會經過主控台編碼轉換，
+非 ASCII（中文）內容可能被誤解碼。因此：
+  - **stdout 只輸出 ASCII**（供排程器比對變化）
+  - **完整中文報告寫入 UTF-8 報告檔**，由小晴在喚醒後自行讀取
+
 用法：
-    python C:/Users/User/xiaoqing/brain/scripts/pulse_check.py
+    C:/Users/User/xiaoqing/brain/scripts/pulse_check.cmd
 """
 
 import io
@@ -19,6 +25,7 @@ import urllib.request
 BRAIN_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DATA_DIR = os.path.join(BRAIN_DIR, "data")
 DB_PATH = os.path.join(DATA_DIR, "memories.db")
+REPORT_PATH = "C:/Users/User/opencode/data/pulse_report.txt"
 
 REPORT = []
 
@@ -28,11 +35,7 @@ def add(line: str) -> None:
 
 
 def check_new_memories() -> None:
-    """最近 35 分鐘內有沒有新的「決定 / 偏好 / 專案」類記憶值得主動提出。
-
-    只看需要主人留意的類型（decision / preference / project / routine），
-    純事實與工具操作不列入，避免每半小時就為了瑣事打擾主人。
-    """
+    """最近 35 分鐘內有沒有新的「決定 / 偏好 / 專案」類記憶值得主動提出。"""
     if not os.path.isfile(DB_PATH):
         return
     try:
@@ -45,8 +48,8 @@ def check_new_memories() -> None:
         ).fetchall()
         conn.close()
         if rows:
-            add(f"NOTE: {len(rows)} notable new decision/preference/project memories in the last 35 minutes")
-            for (topic, text) in rows[:3]:
+            add(f"有 {len(rows)} 筆新的決定/偏好/專案類記憶寫入（最近 35 分鐘內）：")
+            for topic, text in rows[:3]:
                 add(f"  - ({topic}) {text}")
     except Exception:
         pass
@@ -70,7 +73,11 @@ def check_vector_drift() -> None:
         }
         missing = len(sqlite_ids - lancedb_ids)
         if missing > 0:
-            add(f"SYNC: vector store is missing {missing} memories (embedding degraded). Run scripts/resync_lancedb.py")
+            add(
+                f"向量庫與 SQLite 不同步：少了 {missing} 筆記憶的向量"
+                "（embedding 當時失敗，檢索已降級為純 BM25）。"
+                "修復方式：python scripts/resync_lancedb.py"
+            )
     except Exception:
         pass
 
@@ -81,7 +88,11 @@ def check_ollama() -> None:
         with urllib.request.urlopen("http://127.0.0.1:11434/api/tags", timeout=4) as resp:
             resp.read(1)
     except Exception:
-        add("OLLAMA: NOT RUNNING. Memory embedding is degraded to BM25-only search. Recommend starting Ollama.")
+        add(
+            "Ollama 沒有在跑！記憶的向量化寫入正在降級，"
+            "檢索只剩 BM25 關鍵詞比對。建議啟動 Ollama："
+            "Start-Process -FilePath \"C:/Users/User/AppData/Local/Programs/Ollama/ollama.exe\" -ArgumentList \"serve\" -WindowStyle Hidden"
+        )
 
 
 def check_disk() -> None:
@@ -90,26 +101,41 @@ def check_disk() -> None:
         usage = shutil.disk_usage("C:\\")
         free_gb = usage.free / (1024**3)
         if free_gb < 20:
-            add(f"DISK: C drive free space is only {free_gb:.1f} GB (below the 20 GB threshold)")
+            add(f"C 磁碟剩餘空間只剩 {free_gb:.1f} GB（低於 20 GB 警戒線），請清理一下。")
     except Exception:
         pass
 
 
 def main() -> int:
-    try:
-        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-    except Exception:
-        pass
-
     check_new_memories()
     check_vector_drift()
     check_ollama()
     check_disk()
 
+    # 完整中文報告寫入 UTF-8 檔案，供小晴在喚醒後讀取
+    try:
+        os.makedirs(os.path.dirname(REPORT_PATH), exist_ok=True)
+        with io.open(REPORT_PATH, "w", encoding="utf-8") as fh:
+            fh.write("\n".join(REPORT) if REPORT else "沒有需要主人留意的事，安靜守護中。")
+    except Exception:
+        pass
+
+    # stdout 只輸出 ASCII：排程器需要靠它比對「有沒有變化」
     if not REPORT:
         print("OK-QUIET")
     else:
-        print("\n".join(REPORT))
+        summary = []
+        for line in REPORT:
+            if line.startswith("有 "):
+                summary.append("NEW-MEMORIES")
+            elif "向量庫" in line:
+                summary.append("VECTOR-DRIFT")
+            elif "Ollama" in line:
+                summary.append("OLLAMA-OFFLINE")
+            elif "磁碟" in line:
+                summary.append("LOW-DISK")
+        print("PULSE-ALERT: " + ",".join(sorted(set(summary))))
+        print("REPORT: " + REPORT_PATH)
     return 0
 
 
