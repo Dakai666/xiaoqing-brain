@@ -71,6 +71,16 @@ class SQLiteStorage:
             )
             return [self._row_to_memory(row) for row in cursor.fetchall()]
 
+    def get_all_memories(self, limit: int = 100000) -> List[MemoryUnit]:
+        """取得所有記憶（含已被取代的舊記憶）"""
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.execute(
+                "SELECT * FROM memories ORDER BY timestamp DESC LIMIT ?",
+                (limit,)
+            )
+            return [self._row_to_memory(row) for row in cursor.fetchall()]
+
     def add(self, memory: MemoryUnit) -> str:
         with sqlite3.connect(self.db_path) as conn:
             conn.execute("""

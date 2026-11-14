@@ -60,7 +60,7 @@ def check_vector_drift() -> None:
 
         sqlite = SQLiteStorage()
         lancedb = LanceDBStorage()
-        sqlite_ids = {m.id for m in sqlite.get_active_memories(limit=100000)}
+        sqlite_ids = {m.id for m in sqlite.get_all_memories(limit=100000)}
         lancedb_ids = {
             r["id"]
             for r in lancedb.db["memories"]

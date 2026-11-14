@@ -40,8 +40,10 @@ async def main() -> int:
     sqlite = SQLiteStorage()
     lancedb = LanceDBStorage()
 
+    # 比對時包含「已被取代」的記憶：它們在兩個庫都存在，只是標記不同。
     sqlite_memories = sqlite.get_active_memories(limit=100000)
-    sqlite_ids = {m.id for m in sqlite_memories}
+    sqlite_all = sqlite.get_all_memories(limit=100000)
+    sqlite_ids = {m.id for m in sqlite_all}
 
     lancedb_rows = (
         lancedb.db["memories"].search(None, vector_column_name="vector").limit(100000).to_list()
@@ -50,11 +52,13 @@ async def main() -> int:
 
     missing = [m for m in sqlite_memories if m.id not in lancedb_ids]
     orphaned = lancedb_ids - sqlite_ids
+    superseded_in_sqlite = len(sqlite_all) - len(sqlite_memories)
 
-    print(f"SQLite 有效記憶: {len(sqlite_memories)} 筆")
+    print(f"SQLite 有效記憶: {len(sqlite_memories)} 筆（全部 {len(sqlite_all)} 筆）")
     print(f"LanceDB 向量記憶: {len(lancedb_ids)} 筆")
     print(f"缺少向量 (需補): {len(missing)} 筆")
     print(f"向量孤兒 (SQLite 無對應): {len(orphaned)} 筆")
+    print(f"已被取代的舊記憶 (兩庫皆保留，標記為過時): {superseded_in_sqlite} 筆")
 
     if report_only:
         return 0

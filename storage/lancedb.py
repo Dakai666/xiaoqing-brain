@@ -322,14 +322,24 @@ class LanceDBStorage:
         return int(cjk_chars * 1.5 + other_chars * 1.0)
 
     async def get_by_ids(self, ids: List[str]) -> List[MemoryUnit]:
-        """根據 ID list 取得特定記憶，用於 Progressive Disclosure Layer 3"""
+        """根據 ID list 取得特定記憶，用於 Progressive Disclosure Layer 3。
+
+        支援完整 UUID 或前綴（例如 "ad54f96a"）。
+        """
         if not ids:
             return []
-        
-        id_list = "', '".join(ids)
-        results = self.db["memories"].search(None, vector_column_name="vector")\
-            .where(f"id IN ('{id_list}')")\
-            .limit(len(ids))\
+
+        all_rows = (
+            self.db["memories"]
+            .search(None, vector_column_name="vector")
+            .limit(100000)
             .to_list()
-        
-        return [self._row_to_memory(r) for r in results if not r.get("is_private", False)]
+        )
+        wanted = [i.strip() for i in ids if i and i.strip()]
+        matched = []
+        for r in all_rows:
+            rid = r.get("id", "")
+            if any(rid == w or rid.startswith(w) for w in wanted):
+                matched.append(r)
+
+        return [self._row_to_memory(r) for r in matched if not r.get("is_private", False)]

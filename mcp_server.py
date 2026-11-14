@@ -320,20 +320,33 @@ async def _memory_health() -> list[TextContent]:
     try:
         sqlite = SQLiteStorage()
         lancedb = LanceDBStorage()
-        
-        sqlite_total = len(sqlite.search('', 1000))
-        lancedb_total = len(lancedb.db["memories"].search(None).limit(10000).to_list())
+
+        # 只比對「有效記憶」（未被取代）；被 superseded 的舊記憶留在兩邊是設計如此。
+        sqlite_active = len(sqlite.get_active_memories(limit=100000))
+        lancedb_rows = (
+            lancedb.db["memories"].search(None).limit(100000).to_list()
+        )
+        lancedb_active = len([r for r in lancedb_rows if not r.get("is_superseded", False)])
+        lancedb_superseded = len(lancedb_rows) - lancedb_active
+        sqlite_superseded = len(sqlite.search('', 10000)) - sqlite_active
         today_memories = sqlite.get_today_memories()
-        
-        sync_status = "✅" if sqlite_total == lancedb_total else f"⚠️ 差{lancedb_total - sqlite_total}筆"
-        
+
+        if sqlite_active == lancedb_active:
+            sync_status = "✅ 已同步"
+        else:
+            diff = lancedb_active - sqlite_active
+            sync_status = (
+                f"⚠️ 向量庫差 {abs(diff)} 筆（缺 {max(diff, 0)} / 多 {max(-diff, 0)}），"
+                "可執行 scripts/resync_lancedb.py 修復"
+            )
+
         status_parts = [
-            f"✅ 記憶系統正常運作",
-            f"SQLite: {sqlite_total} 筆",
-            f"LanceDB: {lancedb_total} 筆 ({sync_status})",
+            "✅ 記憶系統正常運作",
+            f"SQLite 有效記憶: {sqlite_active} 筆（另有 {sqlite_superseded} 筆已被取代）",
+            f"LanceDB 有效記憶: {lancedb_active} 筆（另有 {lancedb_superseded} 筆已被取代）({sync_status})",
             f"今日新增: {len(today_memories)} 筆",
         ]
-        
+
         return [TextContent(type="text", text="\n".join(status_parts))]
     except Exception as e:
         return [TextContent(type="text", text=f"❌ 記憶系統錯誤: {str(e)}")]
