@@ -21,16 +21,25 @@ if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
 
+def _clip(text: str, limit: int = 220) -> str:
+    """注入用的截斷：常駐窗口每一輪都會重送這段，所以寧可短。
+
+    需要完整內容時再呼叫 `memory_get_context` / `memory_search`。
+    """
+    text = (text or "").replace("\n", " ").strip()
+    return text if len(text) <= limit else text[:limit] + "…"
+
+
 def main() -> int:
     query = ""
-    top_k = 5
+    top_k = 3
     if len(sys.argv) > 1:
         query = sys.argv[1].strip()
     if len(sys.argv) > 2:
         try:
             top_k = int(sys.argv[2])
         except ValueError:
-            top_k = 5
+            top_k = 3
 
     try:
         from brain.storage.sqlite import SQLiteStorage
@@ -55,7 +64,7 @@ def main() -> int:
                         "full_id": m.id,
                         "topic": m.topic,
                         "intent": m.intent_type.value if hasattr(m.intent_type, "value") else str(m.intent_type),
-                        "text": m.lossless_text,
+                        "text": _clip(m.lossless_text),
                         "time_ago": m.get_time_distance(),
                         "date": m.date,
                         "keywords": m.keywords[:4],
@@ -72,10 +81,10 @@ def main() -> int:
                 core.append({
                     "id": m.id[:8],
                     "topic": m.topic,
-                    "text": m.lossless_text,
+                    "text": _clip(m.lossless_text, 180),
                     "time_ago": m.get_time_distance(),
                 })
-                if len(core) >= 4:
+                if len(core) >= 3:
                     break
 
         out = {

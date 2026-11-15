@@ -1,4 +1,5 @@
 import json
+import os
 import sys
 from datetime import datetime, timezone
 from typing import Optional
@@ -129,7 +130,25 @@ class OpenCodeHook(MemoryHook):
             print(f"[OpenCodeHook] Error recording tool use: {e}", flush=True, file=sys.stderr)
 
     async def on_stop(self, event: StopEvent) -> None:
-        """生成 session 摘要日記，儲存為 diary 記憶"""
+        """生成 session 摘要日記（預設**停用**，見下方說明）。
+
+        ⚠️ 2026-11-15 停用原因（主人反映 API 額度燒太凶）：
+        這裡原本每一回合（每次 session.idle）都會把 `get_by_session(sid)` 回傳的
+        **整個 session 全部記憶**丟給 LLM 做 synthesis。常駐單一窗口的 session 永遠不關，
+        所以第 N 回合要送 N 筆記憶 —— 實測主人窗口累積到 77 筆時，
+        每一回合就是一次約 7k token 的 LLM 呼叫，而產出是 **0 筆 diary**
+        （資料庫裡 topic='diary' 一筆都沒有）。純粹是配額黑洞。
+
+        日記改由兩個真正有效的途徑產生：
+          1. 夜間沉澱 `scripts/nightly_reflection.py`（每天一次）
+          2. 小晴主動 `memory_add` 寫「今日回顧」
+
+        要恢復舊行為：設環境變數 `XIAOQING_ENABLE_STOP_SYNTHESIS=1`，
+        且建議同時設 `XIAOQING_STOP_SYNTHESIS_MAX`（預設 12）限制單次筆數。
+        """
+        if os.environ.get("XIAOQING_ENABLE_STOP_SYNTHESIS") != "1":
+            return
+
         sid = event.session_id
         if not sid:
             return
@@ -138,12 +157,20 @@ class OpenCodeHook(MemoryHook):
             from ..stages.synthesis import SynthesisStage
             from ..storage.sqlite import SQLiteStorage
 
+            try:
+                limit = int(os.environ.get("XIAOQING_STOP_SYNTHESIS_MAX", "12"))
+            except ValueError:
+                limit = 12
+
             sqlite = SQLiteStorage()
             memories = sqlite.get_by_session(sid)
 
             if len(memories) < 2:
                 print(f"[OpenCodeHook] Session {sid[:8]} has {len(memories)} memories, skip summary", flush=True, file=sys.stderr)
                 return
+
+            # 只摘要最近的 limit 筆，避免常駐窗口無限成長把配額燒光
+            memories = memories[-limit:]
 
             synthesis = SynthesisStage(model=self._model)
             synthesized = await synthesis.process(memories)
