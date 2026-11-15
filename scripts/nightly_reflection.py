@@ -21,6 +21,12 @@ import urllib.request
 from datetime import datetime
 
 BRAIN_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+PROJECT_ROOT = os.path.dirname(BRAIN_DIR)
+#: `brain` 套件在 PROJECT_ROOT 之下；以 `python scripts/nightly_reflection.py` 執行時
+#: sys.path[0] 只有 scripts/，不補這行 `from brain.storage...` 會 ImportError
+#: （實際症狀：晚上補向量永遠失敗「No module named 'brain'」，向量漂移永遠修不好）。
+if PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, PROJECT_ROOT)
 DATA_DIR = os.path.join(BRAIN_DIR, "data")
 DB_PATH = os.path.join(DATA_DIR, "memories.db")
 REPORT_PATH = "C:/Users/User/opencode/data/nightly_report.txt"

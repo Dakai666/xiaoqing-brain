@@ -90,12 +90,28 @@ class OllamaBackend(LLMBackend):
         options.setdefault("num_ctx", num_ctx)
 
         client = self._client()
-        response = client.chat(
-            model=model,
-            messages=messages,
-            options=options,
-            keep_alive=keep_alive,
-        )
+        # 預設關掉 thinking：qwen3.5 的思考段很容易吃掉整個 num_ctx，
+        # 導致 content 是空字串（記憶因此靜默丟失）。記憶抽取不需要長思考。
+        # 想開回來：XIAOQING_CHAT_THINK=1
+        use_think = os.environ.get("XIAOQING_CHAT_THINK") == "1"
+
+        def _chat():
+            kwargs = {
+                "model": model,
+                "messages": messages,
+                "options": options,
+                "keep_alive": keep_alive,
+            }
+            if not use_think:
+                kwargs["think"] = False
+            try:
+                return client.chat(**kwargs)
+            except TypeError:
+                # 舊版 ollama client 不支援 think 參數
+                kwargs.pop("think", None)
+                return client.chat(**kwargs)
+
+        response = _chat()
         # 空回應重試一次（第一次常常是模型剛換入、KV cache 還沒就緒）
         if not (response.get("message") or {}).get("content", "").strip():
             print(
@@ -103,12 +119,7 @@ class OllamaBackend(LLMBackend):
                 flush=True,
                 file=sys.stderr,
             )
-            response = client.chat(
-                model=model,
-                messages=messages,
-                options=options,
-                keep_alive=keep_alive,
-            )
+            response = _chat()
         return response
 
     async def embeddings(self, model: str, prompt: str, **kwargs) -> dict:
