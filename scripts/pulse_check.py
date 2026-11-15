@@ -88,17 +88,82 @@ def check_vector_drift() -> None:
         pass
 
 
-def check_ollama() -> None:
-    """Ollama 是否存活（記憶向量化後端）。"""
+def ollama_alive() -> bool:
     try:
         with urllib.request.urlopen("http://127.0.0.1:11434/api/tags", timeout=4) as resp:
             resp.read(1)
+        return True
     except Exception:
-        add(
-            "Ollama 沒有在跑！記憶的向量化寫入正在降級，"
-            "檢索只剩 BM25 關鍵詞比對。建議啟動 Ollama："
-            "Start-Process -FilePath \"C:/Users/User/AppData/Local/Programs/Ollama/ollama.exe\" -ArgumentList \"serve\" -WindowStyle Hidden"
+        return False
+
+
+def _spawn_ollama_hidden() -> bool:
+    """無視窗、脫離式啟動 `ollama serve`。
+
+    要點（2026-11-15 主人的明確要求：排程不可彈出視窗）：
+      * DETACHED_PROCESS + CREATE_NO_WINDOW → 完全沒有主控台視窗
+      * CREATE_NEW_PROCESS_GROUP + 不等待 → 不阻塞巡檢、不綁住 stdout
+    不能改用 `cmd /c start ...`（那會閃一個黑窗，主人打遊戲時會被跳窗）。
+    """
+    exe = os.path.expandvars(r"%LOCALAPPDATA%\Programs\Ollama\ollama.exe")
+    if not os.path.isfile(exe):
+        return False
+    # 優先用 Task Scheduler 喚醒：由排程服務持有行程，不在 agent 的 Job Object 裡，
+    # 不會隨 OpenCode 重啟被帶走；動作是 wscript //B，全程無視窗。
+    try:
+        import subprocess
+
+        r = subprocess.run(
+            ["schtasks", "/Run", "/TN", "Xiaoqing Ollama Serve"],
+            capture_output=True,
+            timeout=20,
+            creationflags=0x08000000,
         )
+        if r.returncode == 0:
+            return True
+    except Exception:
+        pass
+    env = dict(os.environ)
+    env["OLLAMA_MAX_LOADED_MODELS"] = "1"
+    env["OLLAMA_KEEP_ALIVE"] = "2m"
+    try:
+        import subprocess
+
+        flags = 0x00000008 | 0x08000000 | 0x00000200  # DETACHED | NO_WINDOW | NEW_GROUP
+        subprocess.Popen(
+            [exe, "serve"],
+            env=env,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            creationflags=flags,
+            close_fds=True,
+        )
+        return True
+    except Exception:
+        return False
+
+
+def ensure_ollama() -> None:
+    """Ollama 掛了就默默叫回來；只有「叫不回來」才通知主人。
+
+    記憶寫入本身有降級保護（Ollama 不在時只寫 SQLite，向量由 try_resync 之後補），
+    所以停機不緊急，安靜自癒即可，不需要為此吵主人。
+    """
+    if ollama_alive():
+        return
+    if not _spawn_ollama_hidden():
+        add("Ollama 沒有在跑，而且自動啟動失敗（找不到 ollama.exe）。向量化寫入降級中，補救後會自動補齊。")
+        return
+    # 等它起來（最多約 12 秒）；起來了就當沒事
+    import time
+
+    for _ in range(12):
+        time.sleep(1)
+        if ollama_alive():
+            add("（Ollama 剛才斷線，已自動默默重啟成功）")
+            return
+    add("Ollama 斷線且自動重啟逾時，向量化寫入降級中（記憶本身仍有寫入，之後會自動補向量）。")
 
 
 def check_disk() -> None:
@@ -175,11 +240,13 @@ def try_resync() -> None:
 
 
 def main() -> int:
+    # 順序有講究：先把能自己修的修好（Ollama 拉起、向量補齊），
+    # 再檢查還剩下什麼真正需要主人看一眼的問題，才不會每次都報舊帳。
     check_new_memories()
-    check_vector_drift()
-    check_ollama()
-    check_disk()
+    ensure_ollama()
     try_resync()
+    check_vector_drift()
+    check_disk()
 
     # 完整中文報告寫入 UTF-8 檔案，供小晴在喚醒後讀取
     try:
@@ -190,21 +257,29 @@ def main() -> int:
         pass
 
     # stdout 只輸出 ASCII：排程器需要靠它比對「有沒有變化」
+    #
+    # ⚠️ 只有「真的要主人看一眼」的事才進 ASCII 摘要（＝會不會喚醒 Session）。
+    #    - NEW-MEMORIES 不列入：那只是我自己寫記憶，主人不需要被打擾。
+    #    - 以「（」開頭的行是自癒過程紀錄（例如 Ollama 默默重啟、向量暫緩），
+    #      只留在報告檔裡，不吵人。
     if not REPORT:
         print("OK-QUIET")
     else:
         summary = []
         for line in REPORT:
-            if line.startswith("有 "):
-                summary.append("NEW-MEMORIES")
-            elif "向量庫" in line:
+            if line.startswith("（"):
+                continue
+            if "向量庫" in line:
                 summary.append("VECTOR-DRIFT")
             elif "Ollama" in line:
                 summary.append("OLLAMA-OFFLINE")
             elif "磁碟" in line:
                 summary.append("LOW-DISK")
-        print("PULSE-ALERT: " + ",".join(sorted(set(summary))))
-        print("REPORT: " + REPORT_PATH)
+        if summary:
+            print("PULSE-ALERT: " + ",".join(sorted(set(summary))))
+            print("REPORT: " + REPORT_PATH)
+        else:
+            print("OK-QUIET")
     return 0
 
 
