@@ -41,8 +41,50 @@ def load_env() -> None:
                 os.environ[key] = value
 
 
+def gpu_headroom_mib() -> int:
+    """可用 VRAM（MiB）；查不到回 0（視為沒有獨顯／不設限）。"""
+    try:
+        import subprocess
+
+        out = subprocess.run(
+            ["nvidia-smi", "--query-gpu=memory.used,memory.total", "--format=csv,noheader,nounits"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            creationflags=0x08000000,  # CREATE_NO_WINDOW：不要閃黑窗
+        )
+        if out.returncode != 0:
+            return 0
+        used, total = (int(x) for x in out.stdout.strip().splitlines()[0].split(","))
+        return total - used
+    except Exception:
+        return 0
+
+
 async def main() -> int:
     load_env()
+
+    # 本機 LLM（Ollama）要吃約 6-7GB VRAM。若主人正在跑 ComfyUI 批次，
+    # 寧可這一輪不沉澱記憶，也不要去搶顯存或拖慢產出。
+    # 只有「走本機模型」時才需要這個閘門；MiniMax API 不佔 VRAM。
+    if os.environ.get("XIAOQING_INGEST_LOCAL") == "1":
+        # 明確要求走本機：把 API key 拿掉，configure_llm_backend 就會選 Ollama
+        os.environ.pop("MINIMAX_API_KEY", None)
+    using_local = not os.environ.get("MINIMAX_API_KEY", "")
+    if using_local:
+        try:
+            gate = int(os.environ.get("XIAOQING_INGEST_VRAM_GATE", "6500"))
+        except ValueError:
+            gate = 6500
+        headroom = gpu_headroom_mib()
+        if headroom and headroom < gate:
+            print(
+                json.dumps(
+                    {"ok": True, "skipped": f"low-vram({headroom}MiB<{gate}MiB)", "events": 0},
+                    ensure_ascii=False,
+                )
+            )
+            return 0
 
     # 優先讀命令列指定的檔案；沒有才走 stdin。
     # 明確用 UTF-8 解碼：Windows 上 sys.stdin 預設是 locale 編碼（cp950），

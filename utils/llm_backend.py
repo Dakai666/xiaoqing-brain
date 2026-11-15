@@ -76,8 +76,18 @@ class OllamaBackend(LLMBackend):
         return ollama.Client(host=self.base_url)
 
     async def chat(self, model: str, messages: List[dict], **kwargs) -> dict:
-        options = kwargs.get("options", {})
+        options = dict(kwargs.get("options") or {})
         keep_alive = kwargs.get("keep_alive", 300)
+
+        # 2026-11-15：本機 chat 一定要明給 num_ctx。
+        # 預設 40960 會吃掉大量 VRAM（KV cache），在顯存被 ComfyUI 佔用時
+        # Ollama 會回空內容（content=""）→ 上層 JSON 解析失敗、記憶靜默丟失。
+        # 記憶壓縮的 prompt 約 1.5-4k token，8192 綽綽有餘。
+        try:
+            num_ctx = int(os.environ.get("XIAOQING_CHAT_NUM_CTX", "8192"))
+        except ValueError:
+            num_ctx = 8192
+        options.setdefault("num_ctx", num_ctx)
 
         client = self._client()
         response = client.chat(
@@ -86,6 +96,19 @@ class OllamaBackend(LLMBackend):
             options=options,
             keep_alive=keep_alive,
         )
+        # 空回應重試一次（第一次常常是模型剛換入、KV cache 還沒就緒）
+        if not (response.get("message") or {}).get("content", "").strip():
+            print(
+                "[llm_backend] 本機模型回空內容，重試一次（num_ctx=%s）" % num_ctx,
+                flush=True,
+                file=sys.stderr,
+            )
+            response = client.chat(
+                model=model,
+                messages=messages,
+                options=options,
+                keep_alive=keep_alive,
+            )
         return response
 
     async def embeddings(self, model: str, prompt: str, **kwargs) -> dict:
@@ -113,10 +136,18 @@ class MiniMaxBackend(LLMBackend):
     Auth: x-api-key header + anthropic-version
     Embeddings: Anthropic has no native embeddings API; falls back to Ollama
     if available, otherwise raises.
+
+    2026-11-15 新增：**額度用完自動降級到本機 Ollama**。
+    主人按方案有週上限，額度一爆整個記憶系統就停擺（HTTP 429），
+    所以 chat() 遇到 429/5xx 時改走本機模型，並在 stderr 留下紀錄。
+    關掉：`XIAOQING_LOCAL_FALLBACK=0`。
     """
 
     DEFAULT_BASE_URL = "https://api.minimax.io/anthropic"
     DEFAULT_VERSION = "2023-06-01"
+
+    #: 這些狀態碼代表「不是內容問題，是額度或服務問題」→ 值得改走本機
+    FALLBACK_STATUS = {429, 500, 502, 503, 504, 529}
 
     def __init__(
         self,
@@ -124,11 +155,13 @@ class MiniMaxBackend(LLMBackend):
         base_url: Optional[str] = None,
         anthropic_version: Optional[str] = None,
         embed_fallback: Optional[LLMBackend] = None,
+        chat_fallback: Optional[LLMBackend] = None,
     ):
         self.api_key = api_key or os.getenv("MINIMAX_API_KEY", "")
         self.base_url = (base_url or os.getenv("MINIMAX_BASE_URL", self.DEFAULT_BASE_URL)).rstrip("/")
         self.anthropic_version = anthropic_version or os.getenv("MINIMAX_ANTHROPIC_VERSION", self.DEFAULT_VERSION)
         self.embed_fallback = embed_fallback or OllamaBackend()
+        self.chat_fallback = chat_fallback or OllamaBackend()
         self._client: Optional[httpx.AsyncClient] = None
 
     def _get_client(self) -> httpx.AsyncClient:
@@ -176,8 +209,25 @@ class MiniMaxBackend(LLMBackend):
         if "thinking" in options:
             payload["thinking"] = options["thinking"]
 
-        response = await client.post("/v1/messages", json=payload)
-        response.raise_for_status()
+        try:
+            response = await client.post("/v1/messages", json=payload)
+            response.raise_for_status()
+        except httpx.HTTPStatusError as e:
+            if (
+                e.response is not None
+                and e.response.status_code in self.FALLBACK_STATUS
+                and os.getenv("XIAOQING_LOCAL_FALLBACK", "1") != "0"
+            ):
+                # 額度爆了／API 掛了 → 改走本機 Ollama，記憶功能不要因此停擺
+                local_model = resolve_llm_model(None, "ollama")
+                print(
+                    f"[llm_backend] MiniMax 回應 HTTP {e.response.status_code}，"
+                    f"自動降級到本機 Ollama（{local_model}）",
+                    flush=True,
+                    file=sys.stderr,
+                )
+                return await self.chat_fallback.chat(local_model, messages, **kwargs)
+            raise
         data = response.json()
 
         text_parts = []
