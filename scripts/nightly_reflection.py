@@ -127,14 +127,10 @@ def check_gpu_headroom() -> int:
 def resync_vectors() -> None:
     """把缺向量的記憶補回 LanceDB。
 
-    需要 embedding 模型載入約 5GB VRAM，所以先看 VRAM 餘量：
-    不夠就跳過，留到下次（避免跟 DK 的 GPU 批次搶顯存）。
+    順序是「先確認真的缺，再看 VRAM」——否則 GPU 被佔用時會誤報
+    VECTOR-DRIFT（明明已經同步），害主人以為出事。
+    需要 embedding 模型載入約 5GB VRAM，所以餘量不夠就跳過，留到下次。
     """
-    headroom = check_gpu_headroom()
-    if headroom and headroom < 7000:
-        add(f"VRAM 餘量只有 {headroom} MiB，不足 7000 MiB，本輪不補向量（留到 GPU 空檔時）。")
-        FLAGS.append("VECTOR-DRIFT")
-        return
     try:
         import asyncio
 
@@ -143,7 +139,6 @@ def resync_vectors() -> None:
 
         sqlite = SQLiteStorage()
         lancedb = LanceDBStorage()
-        sqlite_ids = {m.id for m in sqlite.get_all_memories(limit=100000)}
         lancedb_ids = {
             r["id"]
             for r in lancedb.db["memories"].search(None, vector_column_name="vector").limit(100000).to_list()
@@ -152,6 +147,16 @@ def resync_vectors() -> None:
         if not missing:
             add("向量庫與 SQLite 已同步，無需補寫。")
             return
+
+        headroom = check_gpu_headroom()
+        if headroom and headroom < 7000:
+            add(
+                f"向量庫缺 {len(missing)} 筆向量，但 VRAM 餘量只有 {headroom} MiB"
+                "（不足 7000 MiB），本輪不補（留到 GPU 空檔，檢索暫時走 BM25）。"
+            )
+            FLAGS.append("VECTOR-DRIFT")
+            return
+
         add(f"開始補寫 {len(missing)} 筆缺向量的記憶……")
 
         async def _run():
